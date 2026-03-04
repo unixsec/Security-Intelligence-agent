@@ -1,0 +1,90 @@
+# ================================================================
+# 安全情报分析智能体 — WF-6 周报生成 Workflow
+# 版本：v1.0
+# 作者：alex (unix_sec@163.com)
+# ================================================================
+# 触发：K8s CronJob 周五 12:00
+# 覆盖范围：周一 00:00 ~ 周五 23:59
+# 输出：Top10 周度情报 + 威胁趋势分析
+
+name: WF-6 周报生成
+version: "1.0"
+author: "alex (unix_sec@163.com)"
+
+inputs:
+  - name: week_number
+    type: string
+    required: true
+    description: "ISO 周次，格式 YYYY-WNN"
+  - name: period_start
+    type: string
+    required: true
+  - name: period_end
+    type: string
+    required: true
+
+nodes:
+  - id: node_fetch_top10
+    type: http_request
+    name: "查询本周 Top10 情报"
+    method: GET
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/intel/scored"
+    params:
+      date_from: "{{inputs.period_start}}"
+      date_to: "{{inputs.period_end}}"
+      page_size: 10
+
+  - id: node_llm_trend
+    type: llm
+    name: "LLM 本周威胁趋势分析"
+    system_prompt: |
+      你是服务于大型跨国智能网联汽车企业的首席安全分析师。
+      请基于本周 Top10 安全情报，撰写周度安全态势分析：
+      1. 本周最值得关注的 2-3 个威胁主题
+      2. 与上周相比的变化趋势
+      3. 对本企业的综合影响评估
+      4. 下周需要重点关注的领域
+      风格：专业简洁，约 200-300 字。
+    user_prompt: |
+      本周（{{inputs.week_number}}）Top10 情报：
+      {% for intel in node_fetch_top10.items %}
+      {{loop.index}}. [{{intel.p_level}}] {{intel.title}}（{{intel.intel_type}}, {{intel.total_score}}分）
+         {{intel.summary_zh}}
+      {% endfor %}
+
+  - id: node_build_report
+    type: template
+    name: "生成周报"
+    template: |
+      # 安全情报周报
+      周次：{{inputs.week_number}} | 覆盖：{{inputs.period_start}} ~ {{inputs.period_end}}
+      
+      ## 本周安全态势
+      {{node_llm_trend}}
+      
+      ## 本周 Top10 情报
+      {% for intel in node_fetch_top10.items %}
+      ### {{loop.index}}. [{{intel.p_level}}] {{intel.title}}
+      综合分：{{intel.total_score}} | 类型：{{intel.intel_type}} | CVE：{{intel.cve_id or 'N/A'}}
+      
+      {{intel.summary_zh}}
+      {% endfor %}
+      
+      ---
+      *安全情报分析智能体 v1.0 | alex (unix_sec@163.com)*
+
+  - id: node_save_and_push
+    type: http_request
+    method: POST
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/reports"
+    body:
+      report_type: "weekly"
+      report_code: "WEEKLY-{{inputs.week_number}}-OPS"
+      report_version: "security_ops"
+      period_start: "{{inputs.period_start}} 00:00:00"
+      period_end: "{{inputs.period_end}} 23:59:59"
+      content: "{{node_build_report}}"
+      status: "ready"
+
+  - id: node_end
+    type: end

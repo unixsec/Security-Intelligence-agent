@@ -1,0 +1,104 @@
+# ================================================================
+# 安全情报分析智能体 — WF-7 月报生成 Workflow
+# 版本：v1.0
+# 作者：alex (unix_sec@163.com)
+# ================================================================
+# 触发：K8s CronJob 月末前一天 09:00
+# 覆盖范围：当月 1 日 ~ 月末
+# 输出：Top20 月度情报 + 深度趋势分析
+
+name: WF-7 月报生成
+version: "1.0"
+author: "alex (unix_sec@163.com)"
+
+inputs:
+  - name: year_month
+    type: string
+    required: true
+    description: "年月，格式 YYYY-MM"
+  - name: period_start
+    type: string
+    required: true
+  - name: period_end
+    type: string
+    required: true
+
+nodes:
+  - id: node_fetch_top20
+    type: http_request
+    name: "查询本月 Top20 情报"
+    method: GET
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/intel/scored"
+    params:
+      date_from: "{{inputs.period_start}}"
+      date_to: "{{inputs.period_end}}"
+      page_size: 20
+
+  - id: node_fetch_stats
+    type: http_request
+    name: "查询月度统计"
+    method: GET
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/dashboard/stats"
+    params:
+      period_start: "{{inputs.period_start}}"
+      period_end: "{{inputs.period_end}}"
+
+  - id: node_llm_monthly_analysis
+    type: llm
+    name: "LLM 月度深度分析"
+    system_prompt: |
+      你是服务于大型跨国智能网联汽车企业的首席安全分析师。
+      请基于本月安全情报，撰写月度安全分析报告（约 500-800 字），包含：
+      1. 月度安全态势总结
+      2. 本月最重要的 3 个安全事件/漏洞分析
+      3. 行业威胁趋势（车联网/企业IT/合规三个维度）
+      4. 下月威胁预判和重点关注领域
+      5. 给 CISO 的战略建议（2-3 条）
+    user_prompt: |
+      月份：{{inputs.year_month}}
+      
+      本月 Top20 情报列表：
+      {% for intel in node_fetch_top20.items %}
+      {{loop.index}}. [{{intel.p_level}}, {{intel.total_score}}分] {{intel.title}}
+         类型：{{intel.intel_type}} | {{intel.summary_zh[:100]}}
+      {% endfor %}
+
+  - id: node_build_executive
+    type: template
+    name: "生成月报高管版"
+    template: |
+      # 安全情报月报（高管版）
+      月份：{{inputs.year_month}} | 密级：内部
+      
+      ## 执行摘要
+      {{node_llm_monthly_analysis}}
+      
+      ## 本月 Top5 重点情报
+      {% for intel in node_fetch_top20.items[:5] %}
+      ### {{loop.index}}. {{intel.title}}
+      - 评级：{{intel.p_level}} | 综合分：{{intel.total_score}}
+      - 摘要：{{intel.summary_zh}}
+      - 影响分析：{{intel.impact_analysis}}
+      {% endfor %}
+      
+      ---
+      *安全情报分析智能体 v1.0*
+
+  - id: node_save_reports
+    type: parallel
+    name: "保存月报"
+    branches:
+      - type: http_request
+        method: POST
+        url: "http://intel-admin-api.intel-system.svc:8080/api/v1/reports"
+        body:
+          report_type: "monthly"
+          report_code: "MONTHLY-{{inputs.year_month}}-EXEC"
+          report_version: "executive"
+          period_start: "{{inputs.period_start}} 00:00:00"
+          period_end: "{{inputs.period_end}} 23:59:59"
+          content: "{{node_build_executive}}"
+          status: "ready"
+
+  - id: node_end
+    type: end

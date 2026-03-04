@@ -1,0 +1,99 @@
+# ================================================================
+# 安全情报分析智能体 — MySQL StatefulSet
+# 版本：v1.0
+# 作者：alex (unix_sec@163.com)
+# ================================================================
+
+{{- if .Values.mysql.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql-primary
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: mysql-primary
+spec:
+  serviceName: mysql-primary
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql-primary
+  template:
+    metadata:
+      labels:
+        app: mysql-primary
+    spec:
+      containers:
+        - name: mysql
+          image: {{ .Values.mysql.image }}
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MYSQL_DATABASE
+              value: {{ .Values.mysql.database }}
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: username
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: password
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: password
+            - name: TZ
+              value: {{ .Values.timezone }}
+          args:
+            - --character-set-server=utf8mb4
+            - --collation-server=utf8mb4_unicode_ci
+            - --innodb_buffer_pool_size=512M
+            - --max_connections=200
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+          livenessProbe:
+            exec:
+              command: ["mysqladmin", "ping", "-h", "localhost"]
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["mysqladmin", "ping", "-h", "localhost"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+  volumeClaimTemplates:
+    - metadata:
+        name: mysql-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: {{ .Values.mysql.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.mysql.storageSize }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-primary
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: mysql-primary
+  ports:
+    - port: 3306
+      targetPort: 3306
+  clusterIP: None  # Headless Service for StatefulSet
+{{- end }}

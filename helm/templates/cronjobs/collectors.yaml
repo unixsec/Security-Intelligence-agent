@@ -1,0 +1,227 @@
+# ================================================================
+# 安全情报分析智能体 — 采集器 CronJob 配置
+# 版本：v1.0
+# 作者：alex (unix_sec@163.com)
+# ================================================================
+
+---
+# RSS 采集器
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: collector-rss
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: collector-rss
+    component: collector
+spec:
+  schedule: {{ .Values.collectors.rss.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: rss-collector
+              image: "{{ .Values.imageRegistry }}/{{ .Values.images.rssCollector.repository }}:{{ .Values.images.rssCollector.tag }}"
+              imagePullPolicy: {{ .Values.imagePullPolicy }}
+              env:
+                - name: MYSQL_HOST
+                  value: "mysql-primary.{{ .Values.namespace }}.svc.cluster.local"
+                - name: MYSQL_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: mysql-credentials
+                      key: password
+                - name: MYSQL_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: mysql-credentials
+                      key: username
+                - name: DIFY_API_BASE
+                  value: "http://dify-api.{{ .Values.namespace }}.svc.cluster.local:5001/v1"
+                - name: DIFY_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: dify-api-credentials
+                      key: api-key
+                - name: MILVUS_HOST
+                  value: "milvus-standalone.{{ .Values.namespace }}.svc.cluster.local"
+                - name: TZ
+                  value: {{ .Values.timezone }}
+              resources:
+                requests:
+                  cpu: {{ .Values.collectors.rss.resources.requests.cpu }}
+                  memory: {{ .Values.collectors.rss.resources.requests.memory }}
+                limits:
+                  cpu: {{ .Values.collectors.rss.resources.limits.cpu }}
+                  memory: {{ .Values.collectors.rss.resources.limits.memory }}
+
+---
+# 网页采集器
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: collector-web
+  namespace: {{ .Values.namespace }}
+spec:
+  schedule: {{ .Values.collectors.web.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: web-collector
+              image: "{{ .Values.imageRegistry }}/{{ .Values.images.webCollector.repository }}:{{ .Values.images.webCollector.tag }}"
+              imagePullPolicy: {{ .Values.imagePullPolicy }}
+              env:
+                - name: MYSQL_HOST
+                  value: "mysql-primary.{{ .Values.namespace }}.svc.cluster.local"
+                - name: MYSQL_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: mysql-credentials
+                      key: password
+                - name: MYSQL_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: mysql-credentials
+                      key: username
+                - name: DIFY_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: dify-api-credentials
+                      key: api-key
+                - name: TZ
+                  value: {{ .Values.timezone }}
+              resources:
+                requests:
+                  cpu: {{ .Values.collectors.web.resources.requests.cpu }}
+                  memory: {{ .Values.collectors.web.resources.requests.memory }}
+                limits:
+                  cpu: {{ .Values.collectors.web.resources.limits.cpu }}
+                  memory: {{ .Values.collectors.web.resources.limits.memory }}
+
+---
+# 搜索采集器
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: collector-search
+  namespace: {{ .Values.namespace }}
+spec:
+  schedule: {{ .Values.collectors.search.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: search-collector
+              image: "{{ .Values.imageRegistry }}/{{ .Values.images.searchCollector.repository }}:{{ .Values.images.searchCollector.tag }}"
+              imagePullPolicy: {{ .Values.imagePullPolicy }}
+              env:
+                - name: MYSQL_HOST
+                  value: "mysql-primary.{{ .Values.namespace }}.svc.cluster.local"
+                - name: MYSQL_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: mysql-credentials
+                      key: password
+                - name: MYSQL_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: mysql-credentials
+                      key: username
+                - name: SEARCH_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: search-api-credentials
+                      key: api-key
+                - name: DIFY_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: dify-api-credentials
+                      key: api-key
+                - name: TZ
+                  value: {{ .Values.timezone }}
+
+---
+# 日报调度
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: scheduler-daily-report
+  namespace: {{ .Values.namespace }}
+spec:
+  schedule: {{ .Values.schedulers.daily.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: trigger
+              image: curlimages/curl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  curl -X POST \
+                    http://dify-api.{{ .Values.namespace }}.svc.cluster.local:5001/v1/workflows/run \
+                    -H "Authorization: Bearer $(DIFY_API_KEY)" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"inputs\":{\"report_type\":\"daily\",\"report_date\":\"$(date +%Y-%m-%d)\"},\"user\":\"scheduler\"}"
+              env:
+                - name: DIFY_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: dify-api-credentials
+                      key: api-key
+                - name: TZ
+                  value: {{ .Values.timezone }}
+
+---
+# 健康检查调度
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: scheduler-health-check
+  namespace: {{ .Values.namespace }}
+spec:
+  schedule: {{ .Values.schedulers.healthCheck.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: trigger
+              image: curlimages/curl:latest
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  curl -X POST \
+                    http://dify-api.{{ .Values.namespace }}.svc.cluster.local:5001/v1/workflows/run \
+                    -H "Authorization: Bearer $(DIFY_API_KEY)" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"inputs\":{},\"user\":\"scheduler\"}"
+              env:
+                - name: DIFY_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: dify-api-credentials
+                      key: api-key

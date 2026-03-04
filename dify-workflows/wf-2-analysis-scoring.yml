@@ -1,0 +1,266 @@
+﻿# ================================================================
+# 安全情报分析智能体 — WF-2 情报分析与评分 Workflow
+# 版本：v1.0
+# 作者：alex (unix_sec@163.com)
+# 日期：2026-03-04
+# ================================================================
+#
+# 导入说明：
+#   1. 登录 Dify 管理控制台
+#   2. 进入「工作流」→「导入 DSL」
+#   3. 粘贴本文件内容（YAML DSL 格式）
+#   4. 配置工作流 API Key 并记录 workflow_id
+#   5. 将 workflow_id 填入 K8s Secret: dify-api-credentials
+#
+# 触发方式：采集器通过 Dify API 调用
+# 输入参数：raw_intel_id (Integer)
+# 输出：scored_intel 记录写入 MySQL
+# ================================================================
+
+name: WF-2 情报分析与评分
+description: |
+  对每条原始情报调用 LLM 进行五维评分，生成结构化分析结果，
+  自动判定 P 级别，P0/P1 情报触发 WF-4 紧急推送。
+version: "1.0"
+author: "alex (unix_sec@163.com)"
+
+inputs:
+  - name: raw_intel_id
+    type: integer
+    required: true
+    description: "原始情报 ID（raw_intel 表主键）"
+
+nodes:
+
+  # 节点1：从 MySQL 读取原始情报
+  - id: node_fetch_raw
+    type: http_request
+    name: "读取原始情报"
+    method: GET
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/intel/raw/{{inputs.raw_intel_id}}"
+    headers:
+      Content-Type: application/json
+    outputs:
+      - name: raw_intel
+        type: object
+
+  # 节点2：读取当前评分模型配置
+  - id: node_fetch_config
+    type: http_request
+    name: "读取评分模型配置"
+    method: GET
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/config/scoring_model"
+    outputs:
+      - name: scoring_model
+        type: object
+
+  # 节点3：LLM 分析评分（核心节点）
+  - id: node_llm_analysis
+    type: llm
+    name: "LLM 情报分析与评分"
+    model: "{{system_config.llm_model_name}}"
+    system_prompt: |
+      你是一名服务于大型跨国智能网联汽车企业的首席安全分析师（CISO 直属）。
+      本企业主要市场：欧盟、中国大陆、东南亚。
+      
+      安全关注优先级：
+      第一优先级：企业通用IT安全（办公网、云基础设施、供应链、数据安全）
+      第二优先级：车联网/自动驾驶/OTA/智能座舱/智能充电等汽车产品安全
+      
+      分析要求：
+      1. 仅输出严格符合规范的 JSON，不添加任何说明文字
+      2. summary_zh 不超过 200 字
+      3. 评分必须客观，避免通货膨胀（不应大量给出 90+ 分）
+      4. 若情报与本企业无关，总分应偏低（< 40）
+      
+      输出格式：
+      {
+        "title": "标准化中文情报标题（30字以内）",
+        "intel_type": "vulnerability|attack|regulation|data_breach|opinion|trend|technology|industry",
+        "severity": "high|medium|low",
+        "summary_zh": "200字以内中文摘要，包含关键事实",
+        "scores": {
+          "threat_likelihood": 0-100,
+          "business_impact": 0-100,
+          "compliance_impact": 0-100,
+          "time_urgency": 0-100,
+          "source_quality": 0-100
+        },
+        "asset_domain": "企业IT基础设施|车辆产品安全|用户数据资产|制造与供应链|合规与市场准入|品牌与舆论",
+        "affected_markets": ["欧盟","中国大陆","东南亚"],
+        "tech_details": {
+          "cve_id": "CVE-xxxx-xxxx 或 null",
+          "cvss_score": 数值或null,
+          "poc_status": "none|public|in_wild",
+          "attack_vector": "描述或null",
+          "affected_components": "描述或null"
+        },
+        "impact_analysis": "对本企业的影响分析，3-5句，具体说明影响面和风险",
+        "recommendations": ["建议1","建议2","建议3"],
+        "ai_commentary": "安全专家视角点评，2-3句，不要重复摘要"
+      }
+      
+      评分细则（各维度 0-100 分）：
+      
+      威胁可能性（threat_likelihood）：
+      · 90-100：已有在野利用证据（in-the-wild exploitation）
+      · 75-89：PoC 已公开，主动扫描迹象
+      · 60-74：漏洞细节公开，理论可利用
+      · 40-59：存在风险但尚无利用报告
+      · 0-39：理论风险，实际利用可能性低
+      
+      业务影响度（business_impact）：
+      · 90-100：影响核心业务中断或大规模数据泄露（> 10万用户）
+      · 75-89：影响关键业务或中等规模泄露
+      · 60-74：影响辅助业务或小规模泄露
+      · 40-59：间接影响，可快速恢复
+      · 0-39：影响可忽略
+      
+      合规影响度（compliance_impact）：
+      · 90-100：面临监管处罚或强制召回风险
+      · 75-89：需向监管机构报告
+      · 60-74：需内部合规评审
+      · 40-59：监控观察
+      · 0-39：基本无合规影响
+      
+      时效紧迫性（time_urgency）：
+      · 90-100：0day 或实时攻击，需立即响应（< 4h）
+      · 75-89：需在 24h 内响应
+      · 60-74：需在 72h 内响应
+      · 40-59：需在一周内响应
+      · 0-39：可纳入常规排期
+      
+      情报质量（source_quality）：
+      · 90-100：官方机构/知名安全厂商第一手报告
+      · 75-89：知名行业媒体/二级权威来源
+      · 60-74：一般技术博客/社区来源，信息基本可信
+      · 40-59：来源可信度一般，部分信息待核实
+      · 0-39：来源不明或信息质量差
+      
+    user_prompt: |
+      请分析以下安全情报：
+      
+      情报标题：{{node_fetch_raw.raw_intel.title}}
+      情报来源：{{node_fetch_raw.raw_intel.source_name}}
+      原始链接：{{node_fetch_raw.raw_intel.source_url}}
+      发布时间：{{node_fetch_raw.raw_intel.published_at}}
+      原始语言：{{node_fetch_raw.raw_intel.language}}
+      
+      情报内容：
+      {{node_fetch_raw.raw_intel.content}}
+    outputs:
+      - name: llm_result
+        type: string
+
+  # 节点4：JSON 解析 + 计算综合分 + 判定 P 级
+  - id: node_parse_score
+    type: code
+    name: "解析评分结果"
+    language: python
+    code: |
+      import json
+      
+      llm_output = inputs["llm_result"]
+      
+      # 提取 JSON（处理 LLM 可能附带的 markdown 代码块）
+      if "```json" in llm_output:
+          llm_output = llm_output.split("```json")[1].split("```")[0].strip()
+      elif "```" in llm_output:
+          llm_output = llm_output.split("```")[1].split("```")[0].strip()
+      
+      data = json.loads(llm_output)
+      scores = data["scores"]
+      
+      # 加权计算综合分
+      weights = {"threat_likelihood": 0.25, "business_impact": 0.30,
+                 "compliance_impact": 0.20, "time_urgency": 0.15, "source_quality": 0.10}
+      total = sum(scores[k] * w for k, w in weights.items())
+      total = round(total, 2)
+      
+      # 判定 P 级
+      if total >= 85 and scores["threat_likelihood"] >= 80:
+          p_level = "P0"
+      elif total >= 75 or scores["time_urgency"] >= 90:
+          p_level = "P1"
+      else:
+          p_level = "P2"
+      
+      return {
+          "parsed": data,
+          "total_score": total,
+          "p_level": p_level
+      }
+    outputs:
+      - name: scored_result
+        type: object
+
+  # 节点5：写入 scored_intel 表
+  - id: node_write_scored
+    type: http_request
+    name: "写入评分情报"
+    method: POST
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/intel/scored"
+    headers:
+      Content-Type: application/json
+    body:
+      raw_intel_id: "{{inputs.raw_intel_id}}"
+      title: "{{node_parse_score.scored_result.parsed.title}}"
+      intel_type: "{{node_parse_score.scored_result.parsed.intel_type}}"
+      severity: "{{node_parse_score.scored_result.parsed.severity}}"
+      summary_zh: "{{node_parse_score.scored_result.parsed.summary_zh}}"
+      score_threat: "{{node_parse_score.scored_result.parsed.scores.threat_likelihood}}"
+      score_business: "{{node_parse_score.scored_result.parsed.scores.business_impact}}"
+      score_compliance: "{{node_parse_score.scored_result.parsed.scores.compliance_impact}}"
+      score_urgency: "{{node_parse_score.scored_result.parsed.scores.time_urgency}}"
+      score_quality: "{{node_parse_score.scored_result.parsed.scores.source_quality}}"
+      total_score: "{{node_parse_score.scored_result.total_score}}"
+      p_level: "{{node_parse_score.scored_result.p_level}}"
+      asset_domain: "{{node_parse_score.scored_result.parsed.asset_domain}}"
+      affected_markets: "{{node_parse_score.scored_result.parsed.affected_markets}}"
+      tech_details: "{{node_parse_score.scored_result.parsed.tech_details}}"
+      impact_analysis: "{{node_parse_score.scored_result.parsed.impact_analysis}}"
+      recommendations: "{{node_parse_score.scored_result.parsed.recommendations}}"
+      ai_commentary: "{{node_parse_score.scored_result.parsed.ai_commentary}}"
+    outputs:
+      - name: scored_intel_id
+        type: integer
+
+  # 节点6：条件分支 — P0/P1 触发紧急 Workflow
+  - id: node_branch_urgency
+    type: condition
+    name: "紧急情报判断"
+    conditions:
+      - expression: "{{node_parse_score.scored_result.p_level}} in ['P0', 'P1']"
+        next: node_trigger_emergency
+      - default: true
+        next: node_end
+
+  # 节点7：触发 WF-4 紧急情报处理
+  - id: node_trigger_emergency
+    type: http_request
+    name: "触发紧急情报 WF-4"
+    method: POST
+    url: "http://dify-api.intel-system.svc:5001/v1/workflows/run"
+    headers:
+      Authorization: "Bearer {{env.DIFY_API_KEY}}"
+      Content-Type: application/json
+    body:
+      inputs:
+        scored_intel_id: "{{node_write_scored.scored_intel_id}}"
+        p_level: "{{node_parse_score.scored_result.p_level}}"
+      user: "wf-2-trigger"
+
+  - id: node_end
+    type: end
+    name: "完成"
+
+error_handling:
+  max_retries: 3
+  retry_interval: exponential
+  on_final_failure:
+    - type: http_request
+      url: "http://intel-admin-api.intel-system.svc:8080/api/v1/intel/raw/{{inputs.raw_intel_id}}/status"
+      method: PATCH
+      body: { status: "error" }
+    - type: alert
+      message: "WF-2 analysis failed for raw_intel_id={{inputs.raw_intel_id}}"

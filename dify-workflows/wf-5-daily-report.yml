@@ -1,0 +1,233 @@
+# ================================================================
+# 安全情报分析智能体 — WF-5 日报生成 Workflow
+# 版本：v1.0
+# 作者：alex (unix_sec@163.com)
+# 日期：2026-03-04
+# ================================================================
+#
+# 触发：K8s CronJob 每工作日 06:00
+# 输出：生成两版报告（高管简版 + 安全运营详版）→ 08:00 推送
+
+name: WF-5 日报生成
+version: "1.0"
+author: "alex (unix_sec@163.com)"
+
+inputs:
+  - name: report_date
+    type: string
+    required: true
+    description: "报告日期，格式 YYYY-MM-DD，默认今日"
+    default: "{{today}}"
+
+nodes:
+
+  # 查询当日 Top10 已评分情报
+  - id: node_fetch_top10
+    type: http_request
+    name: "查询 Top10 情报"
+    method: GET
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/intel/scored"
+    params:
+      date_from: "{{inputs.report_date}}"
+      date_to: "{{inputs.report_date}}"
+      page_size: 10
+    outputs:
+      - name: top10_intel
+        type: array
+
+  # 查询持续跟踪中的事件
+  - id: node_fetch_events
+    type: http_request
+    name: "查询持续跟踪事件"
+    method: GET
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/intel/events"
+    params:
+      status: "evolving"
+      page_size: 5
+    outputs:
+      - name: ongoing_events
+        type: array
+
+  # LLM 节点A：生成"今日态势一句话"
+  - id: node_llm_headline
+    type: llm
+    name: "生成今日态势"
+    system_prompt: |
+      你是一名安全情报分析师。请根据提供的今日 Top10 情报，
+      用一句话（30字以内）概括今日安全态势，风格简洁专业。
+      不要加任何标点以外的符号。
+    user_prompt: |
+      今日情报标题列表：
+      {{node_fetch_top10.top10_intel | map('title') | join('\n')}}
+    outputs:
+      - name: headline
+        type: string
+
+  # LLM 节点B：生成 AI 综合洞察
+  - id: node_llm_insight
+    type: llm
+    name: "生成 AI 综合洞察"
+    system_prompt: |
+      你是服务于大型跨国智能网联汽车企业的首席安全分析师。
+      请基于今日 Top10 情报，生成 5-8 句的综合安全洞察，要求：
+      1. 指出今日最显著的威胁趋势
+      2. 分析对本企业（汽车行业+企业IT）的潜在影响
+      3. 提出 2-3 条战略性建议
+      风格：简洁专业，适合 CISO 阅读。
+    user_prompt: |
+      今日 Top10 情报摘要：
+      {% for intel in node_fetch_top10.top10_intel %}
+      {{loop.index}}. [{{intel.p_level}}] {{intel.title}}
+         类型：{{intel.intel_type}} | 评分：{{intel.total_score}} | CVE：{{intel.cve_id or 'N/A'}}
+         摘要：{{intel.summary_zh}}
+      {% endfor %}
+      
+      持续跟踪事件：
+      {% for event in node_fetch_events.ongoing_events %}
+      - {{event.event_name}}（{{event.status}}）：{{event.latest_update}}
+      {% endfor %}
+    outputs:
+      - name: ai_insight
+        type: string
+
+  # 模板填充：高管简版
+  - id: node_build_executive
+    type: template
+    name: "生成高管简版"
+    template: |
+      # 安全情报日报（高管版）
+      报告编号：DAILY-{{inputs.report_date | replace('-','')}}-EXEC
+      报告日期：{{inputs.report_date}}
+      报告时间：{{now | format('%H:%M')}}
+      密级：内部
+      
+      ## 今日态势
+      {{node_llm_headline.headline}}
+      
+      ## AI 综合洞察
+      {{node_llm_insight.ai_insight}}
+      
+      ## 今日重点情报 Top10
+      {% for intel in node_fetch_top10.top10_intel %}
+      ### {{loop.index}}. [{{intel.p_level}}] {{intel.title}}
+      - **综合分**：{{intel.total_score}} | **严重度**：{{intel.severity}} | **类型**：{{intel.intel_type}}
+      - **摘要**：{{intel.summary_zh}}
+      - **影响分析**：{{intel.impact_analysis}}
+      - **建议**：{{intel.recommendations | join('；')}}
+      {% endfor %}
+      
+      {% if node_fetch_events.ongoing_events %}
+      ## 持续跟踪事件
+      {% for event in node_fetch_events.ongoing_events %}
+      - **{{event.event_name}}**：{{event.latest_update}}
+      {% endfor %}
+      {% endif %}
+      
+      ---
+      *本报告由安全情报分析智能体 v1.0 自动生成 | 作者：alex | 如有问题请联系安全团队*
+    outputs:
+      - name: executive_report
+        type: string
+
+  # 模板填充：安全运营详版（含技术细节）
+  - id: node_build_ops
+    type: template
+    name: "生成安全运营详版"
+    template: |
+      # 安全情报日报（安全运营版）
+      报告编号：DAILY-{{inputs.report_date | replace('-','')}}-OPS
+      报告日期：{{inputs.report_date}}
+      密级：内部机密
+      
+      ## 今日态势概述
+      {{node_llm_headline.headline}}
+      
+      {{node_llm_insight.ai_insight}}
+      
+      ## Top10 情报详情（按综合分降序）
+      {% for intel in node_fetch_top10.top10_intel %}
+      ---
+      ### {{loop.index}}. {{intel.title}}
+      | 字段 | 值 |
+      |------|----|
+      | P级别 | {{intel.p_level}} |
+      | 综合分 | {{intel.total_score}} |
+      | 严重度 | {{intel.severity}} |
+      | 情报类型 | {{intel.intel_type}} |
+      | CVE编号 | {{intel.cve_id or 'N/A'}} |
+      | CVSS | {{intel.cvss_score or 'N/A'}} |
+      | PoC状态 | {{intel.poc_status or 'N/A'}} |
+      | 攻击向量 | {{intel.attack_vector or 'N/A'}} |
+      | 受影响组件 | {{intel.affected_components or 'N/A'}} |
+      | 影响市场 | {{intel.affected_markets | join('、') if intel.affected_markets else 'N/A'}} |
+      | 资产域 | {{intel.asset_domain or 'N/A'}} |
+      
+      **五维评分**：
+      - 威胁可能性：{{intel.score_threat}} | 业务影响度：{{intel.score_business}}
+      - 合规影响度：{{intel.score_compliance}} | 时效紧迫性：{{intel.score_urgency}}
+      - 情报质量：{{intel.score_quality}}
+      
+      **影响分析**：{{intel.impact_analysis}}
+      
+      **处置建议**：
+      {% for rec in (intel.recommendations or []) %}
+      {{loop.index}}. {{rec}}
+      {% endfor %}
+      
+      **AI 点评**：{{intel.ai_commentary}}
+      {% endfor %}
+      
+      ---
+      *本报告由安全情报分析智能体 v1.0 自动生成 | 禁止外部传播*
+    outputs:
+      - name: ops_report
+        type: string
+
+  # 写入 reports 表（两条记录）
+  - id: node_save_reports
+    type: parallel
+    name: "保存报告"
+    branches:
+      - type: http_request
+        method: POST
+        url: "http://intel-admin-api.intel-system.svc:8080/api/v1/reports"
+        body:
+          report_type: "daily"
+          report_code: "DAILY-{{inputs.report_date | replace('-','')}}-EXEC"
+          report_version: "executive"
+          period_start: "{{inputs.report_date}} 00:00:00"
+          period_end: "{{inputs.report_date}} 23:59:59"
+          content: "{{node_build_executive.executive_report}}"
+          ai_insight: "{{node_llm_insight.ai_insight}}"
+          status: "ready"
+
+      - type: http_request
+        method: POST
+        url: "http://intel-admin-api.intel-system.svc:8080/api/v1/reports"
+        body:
+          report_type: "daily"
+          report_code: "DAILY-{{inputs.report_date | replace('-','')}}-OPS"
+          report_version: "security_ops"
+          period_start: "{{inputs.report_date}} 00:00:00"
+          period_end: "{{inputs.report_date}} 23:59:59"
+          content: "{{node_build_ops.ops_report}}"
+          ai_insight: "{{node_llm_insight.ai_insight}}"
+          status: "ready"
+
+  # 触发 WF-9 推送
+  - id: node_trigger_push
+    type: http_request
+    name: "触发报告推送"
+    method: POST
+    url: "http://dify-api.intel-system.svc:5001/v1/workflows/run"
+    headers:
+      Authorization: "Bearer {{env.DIFY_API_KEY}}"
+    body:
+      inputs:
+        report_date: "{{inputs.report_date}}"
+        report_type: "daily"
+      user: "wf-5-trigger"
+
+  - id: node_end
+    type: end
+    name: "完成"

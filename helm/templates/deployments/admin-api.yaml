@@ -1,0 +1,90 @@
+# ================================================================
+# 安全情报分析智能体 — 管理 API Deployment
+# 版本：v1.0
+# 作者：alex (unix_sec@163.com)
+# ================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: intel-admin-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: intel-admin-api
+    version: "1.0"
+spec:
+  replicas: {{ .Values.adminApi.replicas }}
+  selector:
+    matchLabels:
+      app: intel-admin-api
+  template:
+    metadata:
+      labels:
+        app: intel-admin-api
+        version: "1.0"
+    spec:
+      containers:
+        - name: intel-admin-api
+          image: "{{ .Values.imageRegistry }}/{{ .Values.images.adminApi.repository }}:{{ .Values.images.adminApi.tag }}"
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.adminApi.port }}
+          env:
+            - name: MYSQL_HOST
+              value: "mysql-primary.{{ .Values.namespace }}.svc.cluster.local"
+            - name: MYSQL_PORT
+              value: "3306"
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: username
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: password
+            - name: MYSQL_DATABASE
+              value: "intel_system"
+            - name: DIFY_API_BASE
+              value: "http://dify-api.{{ .Values.namespace }}.svc.cluster.local:5001/v1"
+            - name: DIFY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: dify-api-credentials
+                  key: api-key
+            - name: TZ
+              value: {{ .Values.timezone }}
+          resources:
+            requests:
+              cpu: {{ .Values.adminApi.resources.requests.cpu }}
+              memory: {{ .Values.adminApi.resources.requests.memory }}
+            limits:
+              cpu: {{ .Values.adminApi.resources.limits.cpu }}
+              memory: {{ .Values.adminApi.resources.limits.memory }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.adminApi.port }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.adminApi.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: intel-admin-api
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app: intel-admin-api
+  ports:
+    - port: 8080
+      targetPort: {{ .Values.adminApi.port }}
+  type: ClusterIP

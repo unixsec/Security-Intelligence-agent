@@ -1,0 +1,143 @@
+﻿# ================================================================
+# 安全情报分析智能体 — Helm 默认配置值
+# 版本：v1.0
+# 作者：alex (unix_sec@163.com)
+# ================================================================
+# 使用说明：
+#   生产部署请复制本文件为 values-prod.yaml，
+#   修改其中的密钥、镜像地址等配置，
+#   通过 helm install -f values-prod.yaml 部署。
+
+namespace: intel-system
+
+# ---- 镜像仓库配置 ----
+imageRegistry: "registry.internal.company.com"
+imagePullPolicy: IfNotPresent
+
+# ---- 各服务镜像版本 ----
+images:
+  adminApi:
+    repository: "intel/admin-api"
+    tag: "1.0"
+  adminWeb:
+    repository: "intel/admin-web"
+    tag: "1.0"
+  rssCollector:
+    repository: "intel/rss-collector"
+    tag: "1.0"
+  webCollector:
+    repository: "intel/web-collector"
+    tag: "1.0"
+  searchCollector:
+    repository: "intel/search-collector"
+    tag: "1.0"
+
+# ---- 管理 API ----
+adminApi:
+  replicas: 2
+  port: 8080
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "1"
+      memory: "512Mi"
+
+# ---- 管理前端 ----
+adminWeb:
+  replicas: 2
+  port: 80
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+# ---- MySQL ----
+mysql:
+  enabled: true  # false = 使用外部 MySQL
+  image: "mysql:8.0"
+  storageSize: "100Gi"
+  storageClass: "standard"
+  port: 3306
+  database: "intel_system"
+  # 密钥通过 K8s Secret 注入，不在此处配置明文
+
+# ---- Milvus ----
+milvus:
+  enabled: true  # false = 使用外部 Milvus
+  image: "milvusdb/milvus:v2.4.0"
+  storageSize: "50Gi"
+  storageClass: "standard"
+  port: 19530
+
+# ---- Redis ----
+redis:
+  enabled: true
+  image: "redis:7-alpine"
+  port: 6379
+
+# ---- 采集器 CronJob 调度 ----
+collectors:
+  rss:
+    schedule: "0 */2 * * *"   # 每 2 小时
+    resources:
+      requests: { cpu: "100m", memory: "128Mi" }
+      limits: { cpu: "500m", memory: "256Mi" }
+  web:
+    schedule: "0 1,3 * * *"   # 每日 01:00 和 03:00
+    resources:
+      requests: { cpu: "200m", memory: "256Mi" }
+      limits: { cpu: "1", memory: "512Mi" }
+  search:
+    schedule: "0 0,2 * * *"   # 每日 00:00 和 02:00
+    resources:
+      requests: { cpu: "100m", memory: "128Mi" }
+      limits: { cpu: "500m", memory: "256Mi" }
+
+# ---- 报告调度 ----
+schedulers:
+  daily:
+    schedule: "0 6 * * 1-5"    # 工作日 06:00 生成，08:00 推送
+  weekly:
+    schedule: "0 12 * * 5"     # 周五 12:00
+  monthly:
+    schedule: "0 9 28-31 * *"  # 每月 28-31 日 09:00（脚本内判断是否月末）
+  semiAnnual:
+    schedule: "0 9 30 6 *"     # 6月30日
+  annual:
+    schedule: "0 9 20 12 *"    # 12月20日
+  healthCheck:
+    schedule: "0 6 * * *"      # 每日 06:00
+
+# ---- Ingress ----
+ingress:
+  enabled: true
+  className: "nginx"
+  hosts:
+    adminWeb: "intel-admin.internal.company.com"
+    adminApi: "intel-api.internal.company.com"
+    dify: "dify.internal.company.com"
+    grafana: "grafana.internal.company.com"
+  tls:
+    enabled: false  # 企业内网可关闭 TLS，通过 VPN 保障安全
+
+# ---- 监控 ----
+monitoring:
+  prometheus:
+    enabled: true
+    storageSize: "20Gi"
+    storageClass: "standard"
+  grafana:
+    enabled: true
+    adminPassword: "change-me"  # 生产环境通过 Secret 注入
+
+# ---- 网络策略 ----
+networkPolicy:
+  enabled: true
+
+# ---- 时区 ----
+timezone: "Asia/Shanghai"

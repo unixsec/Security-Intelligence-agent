@@ -1,0 +1,23 @@
+﻿# ================================================================
+# 安全情报分析智能体 — Helm Chart 元数据
+# 版本：v1.0
+# 作者：alex (unix_sec@163.com)
+# ================================================================
+
+apiVersion: v2
+name: security-intel-agent
+description: |
+  安全情报分析智能体 v1.0
+  全自动化安全情报采集、分析、评分、报告生成和推送系统。
+  作者：alex (unix_sec@163.com)
+type: application
+version: 1.0.0
+appVersion: "1.0"
+keywords:
+  - security
+  - intelligence
+  - threat-intel
+  - siem
+maintainers:
+  - name: alex
+    email: unix_sec@163.com

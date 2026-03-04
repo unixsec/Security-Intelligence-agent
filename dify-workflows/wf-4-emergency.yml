@@ -1,0 +1,148 @@
+# ================================================================
+# 安全情报分析智能体 — WF-4 紧急情报处理 Workflow
+# 版本：v1.0
+# 作者：alex (unix_sec@163.com)
+# 日期：2026-03-04
+# ================================================================
+#
+# P0：即时推送企业微信 + 短信（CISO + 安全运营负责人）
+# P1：4h 内推送企业微信 + 邮件（安全运营团队）
+
+name: WF-4 紧急情报处理
+version: "1.0"
+author: "alex (unix_sec@163.com)"
+
+inputs:
+  - name: scored_intel_id
+    type: integer
+    required: true
+  - name: p_level
+    type: string
+    required: true
+    enum: ["P0", "P1"]
+
+nodes:
+
+  # 读取完整评分情报
+  - id: node_fetch_intel
+    type: http_request
+    name: "读取评分情报"
+    method: GET
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/intel/scored/{{inputs.scored_intel_id}}"
+    outputs:
+      - name: intel
+        type: object
+
+  # 生成紧急推送消息
+  - id: node_gen_message
+    type: llm
+    name: "生成紧急推送消息"
+    system_prompt: |
+      你是一名安全情报分析师，负责将情报简报格式化为推送消息。
+      输出简洁明了的 JSON 格式通知：
+      {
+        "title": "【紧急】情报标题",
+        "summary": "3句话以内的核心信息，包含威胁、影响和建议行动",
+        "action_required": "需要立即采取的行动（1-2条）",
+        "contact": "如需了解详情请联系安全运营团队"
+      }
+    user_prompt: |
+      P级别：{{inputs.p_level}}
+      情报标题：{{node_fetch_intel.intel.title}}
+      综合分：{{node_fetch_intel.intel.total_score}}
+      影响分析：{{node_fetch_intel.intel.impact_analysis}}
+      处置建议：{{node_fetch_intel.intel.recommendations}}
+      CVE：{{node_fetch_intel.intel.cve_id}}
+    outputs:
+      - name: push_message
+        type: string
+
+  # P0/P1 分支
+  - id: node_branch_level
+    type: condition
+    name: "P0/P1 分支"
+    conditions:
+      - expression: "{{inputs.p_level}} == 'P0'"
+        next: node_push_p0
+      - expression: "{{inputs.p_level}} == 'P1'"
+        next: node_push_p1
+
+  # P0 推送：企业微信 + 短信
+  - id: node_push_p0
+    type: parallel
+    name: "P0 即时推送"
+    branches:
+      - id: branch_wecom_p0
+        type: http_request
+        name: "企业微信推送"
+        method: POST
+        url: "{{env.WECOM_WEBHOOK_URL}}"
+        body:
+          msgtype: "markdown"
+          markdown:
+            content: |
+              ## 🚨 P0 紧急安全情报
+              **{{node_fetch_intel.intel.title}}**
+              
+              综合评分：**{{node_fetch_intel.intel.total_score}}** | 严重度：**{{node_fetch_intel.intel.severity}}**
+              
+              {{node_gen_message.push_message}}
+              
+              > 来源：安全情报分析智能体 v1.0
+
+      - id: branch_sms_p0
+        type: http_request
+        name: "短信推送"
+        method: POST
+        url: "{{env.SMS_GATEWAY_URL}}"
+        headers:
+          Authorization: "Bearer {{env.SMS_GATEWAY_TOKEN}}"
+        body:
+          recipients: "{{env.P0_SMS_RECIPIENTS}}"
+          content: "【P0紧急】{{node_fetch_intel.intel.title}} 综合分:{{node_fetch_intel.intel.total_score}}，请立即处置，详见企业微信。"
+
+  # P1 推送：企业微信 + 邮件
+  - id: node_push_p1
+    type: parallel
+    name: "P1 紧急推送"
+    branches:
+      - id: branch_wecom_p1
+        type: http_request
+        name: "企业微信推送"
+        method: POST
+        url: "{{env.WECOM_WEBHOOK_URL}}"
+        body:
+          msgtype: "markdown"
+          markdown:
+            content: |
+              ## ⚠️ P1 重要安全情报
+              **{{node_fetch_intel.intel.title}}**
+              
+              综合评分：**{{node_fetch_intel.intel.total_score}}** | 请在 4h 内响应
+              
+              {{node_gen_message.push_message}}
+
+      - id: branch_email_p1
+        type: http_request
+        name: "邮件推送"
+        method: POST
+        url: "http://intel-admin-api.intel-system.svc:8080/api/v1/push/email"
+        body:
+          template: "p1_alert"
+          intel_id: "{{inputs.scored_intel_id}}"
+          recipients_group: "security_ops"
+
+  # 记录推送日志
+  - id: node_log_push
+    type: http_request
+    name: "记录推送日志"
+    method: POST
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/push-logs"
+    body:
+      push_type: "{{inputs.p_level == 'P0' ? 'p0_alert' : 'p1_alert'}}"
+      scored_intel_id: "{{inputs.scored_intel_id}}"
+      status: "sent"
+
+  - id: node_end
+    type: end
+    name: "完成"

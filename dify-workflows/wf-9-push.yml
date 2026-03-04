@@ -1,0 +1,113 @@
+# ================================================================
+# 安全情报分析智能体 — WF-9 报告推送 Workflow
+# 版本：v1.0
+# 作者：alex (unix_sec@163.com)
+# 日期：2026-03-04
+# ================================================================
+
+name: WF-9 报告推送
+version: "1.0"
+author: "alex (unix_sec@163.com)"
+
+inputs:
+  - name: report_type
+    type: string
+    required: true
+  - name: report_date
+    type: string
+    required: true
+
+nodes:
+
+  # 查询当天/当期报告
+  - id: node_fetch_reports
+    type: http_request
+    method: GET
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/reports"
+    params:
+      report_type: "{{inputs.report_type}}"
+      status: "ready"
+    outputs:
+      - name: reports
+        type: array
+
+  # 条件分支：不同报告类型的推送策略
+  - id: node_branch_type
+    type: condition
+    conditions:
+      - expression: "{{inputs.report_type}} == 'daily'"
+        next: node_push_daily
+      - default: true
+        next: node_push_periodic
+
+  # 日报推送（企业微信 Markdown + 邮件）
+  - id: node_push_daily
+    type: parallel
+    name: "推送日报"
+    branches:
+      - id: wecom_daily
+        type: http_request
+        method: POST
+        url: "{{env.WECOM_WEBHOOK_URL}}"
+        body:
+          msgtype: "markdown"
+          markdown:
+            content: |
+              ## 📊 安全情报日报 {{inputs.report_date}}
+              
+              请点击查看完整报告
+              
+              > [高管版] 已发送至邮箱
+              > [运营版] 已发送至安全团队邮箱
+
+      - id: email_daily
+        type: http_request
+        method: POST
+        url: "http://intel-admin-api.intel-system.svc:8080/api/v1/push/email"
+        body:
+          template: "daily_report"
+          report_type: "daily"
+          report_date: "{{inputs.report_date}}"
+          recipients_by_version:
+            executive: "management"
+            security_ops: "security_team"
+
+  # 周/月/半年/年报推送
+  - id: node_push_periodic
+    type: parallel
+    name: "推送定期报告"
+    branches:
+      - id: wecom_periodic
+        type: http_request
+        method: POST
+        url: "{{env.WECOM_WEBHOOK_URL}}"
+        body:
+          msgtype: "markdown"
+          markdown:
+            content: |
+              ## 📈 安全情报{{report_type_label(inputs.report_type)}}
+              周期：{{inputs.report_date}}
+              
+              > 详细报告已发送至邮箱
+
+      - id: email_periodic
+        type: http_request
+        method: POST
+        url: "http://intel-admin-api.intel-system.svc:8080/api/v1/push/email"
+        body:
+          template: "periodic_report"
+          report_type: "{{inputs.report_type}}"
+          report_date: "{{inputs.report_date}}"
+
+  # 更新报告推送状态
+  - id: node_update_status
+    type: http_request
+    method: PATCH
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/reports/status"
+    body:
+      report_type: "{{inputs.report_type}}"
+      report_date: "{{inputs.report_date}}"
+      status: "pushed"
+
+  - id: node_end
+    type: end

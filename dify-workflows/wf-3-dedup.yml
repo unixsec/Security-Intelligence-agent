@@ -1,0 +1,156 @@
+# ================================================================
+# 安全情报分析智能体 — WF-3 语义去重 Workflow
+# 版本：v1.0
+# 作者：alex (unix_sec@163.com)
+# 日期：2026-03-04
+# ================================================================
+#
+# 去重策略：
+#   1. 第一阶段（已在采集器完成）：content_hash SHA256 精确去重
+#   2. 第二阶段（本 WF）：Milvus 语义向量相似度去重
+#      - cosine similarity >= 0.92 → 标记为重复
+#      - 跨日去重：检索近 7 天已处理情报
+#   3. 新情报：触发 WF-2 分析评分
+
+name: WF-3 语义去重
+description: |
+  对原始情报进行语义向量化，与 Milvus 中近 7 天数据比对。
+  相似度 >= 0.92 判为重复；新情报触发 WF-2 分析评分。
+version: "1.0"
+author: "alex (unix_sec@163.com)"
+
+inputs:
+  - name: raw_intel_id
+    type: integer
+    required: true
+
+nodes:
+
+  # 节点1：读取原始情报
+  - id: node_fetch_raw
+    type: http_request
+    name: "读取原始情报"
+    method: GET
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/intel/raw/{{inputs.raw_intel_id}}"
+    outputs:
+      - name: raw_intel
+        type: object
+
+  # 节点2：文本向量化（Embedding）
+  - id: node_embedding
+    type: embedding
+    name: "文本向量化"
+    input: "{{node_fetch_raw.raw_intel.title}} {{node_fetch_raw.raw_intel.summary}}"
+    model: "text-embedding-3-small"
+    outputs:
+      - name: embedding_vector
+        type: array
+
+  # 节点3：Milvus 相似度检索（近 7 天）
+  - id: node_milvus_search
+    type: code
+    name: "Milvus 向量检索"
+    language: python
+    code: |
+      from pymilvus import connections, Collection
+      from datetime import datetime, timedelta
+      
+      connections.connect(host="milvus-standalone.intel-system.svc", port=19530)
+      collection = Collection("intel_vectors")
+      collection.load()
+      
+      # 计算近 7 天的日期列表
+      lookback_days = 7
+      date_filter = []
+      for i in range(lookback_days + 1):
+          d = (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
+          date_filter.append(f'"{d}"')
+      
+      expr = f'collected_date in [{",".join(date_filter)}]'
+      
+      results = collection.search(
+          data=[inputs["embedding_vector"]],
+          anns_field="embedding",
+          param={"metric_type": "COSINE", "params": {"nprobe": 16}},
+          limit=5,
+          expr=expr,
+          output_fields=["raw_intel_id", "collected_date"],
+      )
+      
+      top_result = results[0][0] if results[0] else None
+      
+      if top_result and top_result.score >= 0.92:
+          return {
+              "is_duplicate": True,
+              "similar_raw_intel_id": top_result.entity.get("raw_intel_id"),
+              "similarity_score": round(top_result.score, 4)
+          }
+      else:
+          return {
+              "is_duplicate": False,
+              "similar_raw_intel_id": None,
+              "similarity_score": round(top_result.score, 4) if top_result else 0.0
+          }
+    outputs:
+      - name: dedup_result
+        type: object
+
+  # 节点4：条件分支
+  - id: node_branch
+    type: condition
+    name: "去重判断"
+    conditions:
+      - expression: "{{node_milvus_search.dedup_result.is_duplicate}} == true"
+        next: node_mark_duplicate
+      - default: true
+        next: node_insert_vector
+
+  # 分支A：标记为重复
+  - id: node_mark_duplicate
+    type: http_request
+    name: "标记重复情报"
+    method: PATCH
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/intel/raw/{{inputs.raw_intel_id}}/status"
+    body: { status: "duplicate" }
+    next: node_end
+
+  # 分支B：写入 Milvus 向量索引
+  - id: node_insert_vector
+    type: code
+    name: "写入向量索引"
+    language: python
+    code: |
+      from pymilvus import connections, Collection
+      from datetime import datetime
+      
+      connections.connect(host="milvus-standalone.intel-system.svc", port=19530)
+      collection = Collection("intel_vectors")
+      
+      today = datetime.utcnow().strftime("%Y-%m-%d")
+      collection.insert([
+          [inputs["raw_intel_id"]],
+          [inputs["raw_intel_id"]],
+          [inputs["embedding_vector"]],
+          [today],
+      ])
+      collection.flush()
+      return {"inserted": True}
+    next: node_trigger_analysis
+
+  # 触发 WF-2 分析评分
+  - id: node_trigger_analysis
+    type: http_request
+    name: "触发 WF-2 分析"
+    method: POST
+    url: "http://dify-api.intel-system.svc:5001/v1/workflows/run"
+    headers:
+      Authorization: "Bearer {{env.DIFY_API_KEY}}"
+      Content-Type: application/json
+    body:
+      inputs:
+        raw_intel_id: "{{inputs.raw_intel_id}}"
+      user: "wf-3-trigger"
+
+  - id: node_end
+    type: end
+    name: "完成"

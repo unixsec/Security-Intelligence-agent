@@ -1,0 +1,76 @@
+# ================================================================
+# 安全情报分析智能体 — WF-8 半年报/年报生成 Workflow
+# 版本：v1.0
+# 作者：alex (unix_sec@163.com)
+# ================================================================
+# 半年报：7月1日前一天 09:00（覆盖上半年）
+# 年报：12月20日 09:00（覆盖全年）
+
+name: WF-8 半年报/年报生成
+version: "1.0"
+author: "alex (unix_sec@163.com)"
+
+inputs:
+  - name: period_type
+    type: string
+    required: true
+    enum: ["semi_annual", "annual"]
+  - name: period_label
+    type: string
+    required: true
+    description: "如 2026H1 或 2025"
+  - name: period_start
+    type: string
+    required: true
+  - name: period_end
+    type: string
+    required: true
+
+nodes:
+  - id: node_fetch_top20
+    type: http_request
+    name: "查询 Top20 情报"
+    method: GET
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/intel/scored"
+    params:
+      date_from: "{{inputs.period_start}}"
+      date_to: "{{inputs.period_end}}"
+      page_size: 20
+
+  - id: node_llm_strategic_analysis
+    type: llm
+    name: "LLM 战略级分析"
+    system_prompt: |
+      你是服务于大型跨国智能网联汽车企业的首席安全分析师（CISO 直属）。
+      请撰写战略级安全分析报告（约 1000-1500 字），包含：
+      1. 报告期内整体安全态势评估
+      2. 重大安全事件回顾（3-5 个）
+      3. 威胁趋势深度分析（车联网安全、供应链安全、合规风险）
+      4. 监管环境变化和合规影响
+      5. 未来 6-12 个月威胁预测
+      6. 安全能力建设建议（战略层面）
+      风格：战略性强，适合董事会级别阅读。
+    user_prompt: |
+      报告周期：{{inputs.period_label}}（{{inputs.period_start}} ~ {{inputs.period_end}}）
+      报告类型：{{inputs.period_type == 'semi_annual' ? '半年报' : '年报'}}
+      
+      Top20 重点情报：
+      {% for intel in node_fetch_top20.items %}
+      {{loop.index}}. [{{intel.p_level}}, {{intel.total_score}}分] {{intel.title}}
+      {% endfor %}
+
+  - id: node_save_report
+    type: http_request
+    method: POST
+    url: "http://intel-admin-api.intel-system.svc:8080/api/v1/reports"
+    body:
+      report_type: "{{inputs.period_type}}"
+      report_code: "{{inputs.period_type | upper}}-{{inputs.period_label}}-EXEC"
+      report_version: "executive"
+      period_start: "{{inputs.period_start}} 00:00:00"
+      period_end: "{{inputs.period_end}} 23:59:59"
+      content: "{{node_llm_strategic_analysis}}"
+      status: "ready"
+
+  - id: node_end
+    type: end

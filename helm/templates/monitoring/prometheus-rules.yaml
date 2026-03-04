@@ -1,0 +1,85 @@
+# ================================================================
+# 安全情报分析智能体 — Prometheus 告警规则
+# 版本：v1.0
+# 作者：alex (unix_sec@163.com)
+# ================================================================
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: intel-agent-alerts
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: security-intel-agent
+    prometheus: kube-prometheus
+spec:
+  groups:
+    - name: intel-agent.rules
+      interval: 30s
+      rules:
+
+        # LLM 不可用告警
+        - alert: LLMApiUnavailable
+          expr: increase(intel_llm_errors_total[5m]) > 10
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "LLM API 不可用"
+            description: "5分钟内 LLM 调用失败超过10次，请立即检查 LLM 服务。"
+
+        # 情报源批量异常
+        - alert: IntelSourceBatchFailure
+          expr: |
+            (count(intel_source_health < 50)) / (count(intel_source_health)) > 0.30
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "超过30%的情报源异常"
+            description: "当前有超过30%的情报源健康分低于50，请检查情报源状态。"
+
+        # 日报生成失败
+        - alert: DailyReportMissing
+          expr: |
+            (time() > (day_of_week() != 0 and day_of_week() != 6) * (floor(time() / 86400) * 86400 + 8 * 3600))
+            and
+            absent(intel_report_generated_total{report_type="daily"} > 0)
+          for: 30m
+          labels:
+            severity: critical
+          annotations:
+            summary: "日报生成失败"
+            description: "当日 08:00 后未检测到日报生成，请检查 WF-5 Workflow 状态。"
+
+        # 采集量异常偏低
+        - alert: IntelCollectionLow
+          expr: |
+            sum(increase(intel_raw_total[24h])) < 
+            (sum(increase(intel_raw_total[24h] offset 7d)) / 7) * 0.5
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "今日情报采集量偏低"
+            description: "今日采集量低于过去7日均值的50%，请检查采集器运行状态。"
+
+        # 推送失败
+        - alert: PushFailureBurst
+          expr: increase(intel_push_failure_total[5m]) > 3
+          for: 1m
+          labels:
+            severity: warning
+          annotations:
+            summary: "推送失败次数过多"
+            description: "5分钟内推送失败超过3次，请检查推送渠道（企业微信/邮件/短信）配置。"
+
+        # MySQL 连接池耗尽
+        - alert: DBConnectionPoolExhausted
+          expr: intel_db_pool_available == 0
+          for: 3m
+          labels:
+            severity: critical
+          annotations:
+            summary: "数据库连接池耗尽"
+            description: "MySQL 连接池已满，服务可能出现超时，请检查连接池配置和数据库负载。"
