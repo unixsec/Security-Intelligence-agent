@@ -1,0 +1,63 @@
+# =============================================================================
+# SIA Local Development — Infrastructure Only
+# Backend/Frontend run natively on host for hot-reload.
+#
+# Required env vars (set in .env or export before running):
+#   DEV_MYSQL_ROOT_PASSWORD   — root password for the dev container
+#   DEV_MYSQL_PASSWORD        — app password (must match SIA_MYSQL_PASSWORD)
+#
+# Usage:
+#   cp .env.example .env && edit .env && set -a && source .env && set +a
+#   docker compose up -d
+# =============================================================================
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DEV_MYSQL_ROOT_PASSWORD:?Set DEV_MYSQL_ROOT_PASSWORD in your shell or .env}
+      MYSQL_DATABASE: sia
+      MYSQL_USER: sia
+      MYSQL_PASSWORD: ${DEV_MYSQL_PASSWORD:?Set DEV_MYSQL_PASSWORD in your shell or .env}
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DEV_MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    # If DEV_REDIS_PASSWORD is set, enable requirepass; otherwise no auth (dev only).
+    command:
+      - sh
+      - -c
+      - |
+        if [ -n "$${DEV_REDIS_PASSWORD}" ]; then
+          exec redis-server --appendonly yes --requirepass "$${DEV_REDIS_PASSWORD}"
+        else
+          exec redis-server --appendonly yes
+        fi
+    environment:
+      DEV_REDIS_PASSWORD: ${DEV_REDIS_PASSWORD:-}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ${DEV_REDIS_PASSWORD:+-a $$DEV_REDIS_PASSWORD} ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  mysql_data:
+  redis_data:

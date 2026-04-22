@@ -1,0 +1,86 @@
+# LLM Gateway Configuration
+# Environment variables override: SIA_LLM_<section>_<key>
+
+default_model: "gemini-pro"
+
+models:
+  deepseek-r1:
+    provider: "local_openai_compat"
+    model_name: "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B"
+    endpoint: "http://localhost:8000/v1"
+    api_key: "${SIA_LLM_LOCAL_API_KEY:-token-not-needed}"
+    temperature: 0.3
+    max_tokens: 4096
+    timeout_seconds: 120
+
+  qwen-72b:
+    provider: "local_openai_compat"
+    model_name: "Qwen/Qwen2.5-72B-Instruct"
+    endpoint: "http://localhost:8001/v1"
+    api_key: "${SIA_LLM_LOCAL_API_KEY:-token-not-needed}"
+    temperature: 0.3
+    max_tokens: 4096
+    timeout_seconds: 120
+
+  glm-4:
+    provider: "local_openai_compat"
+    model_name: "THUDM/glm-4-9b-chat"
+    endpoint: "http://localhost:8002/v1"
+    api_key: "${SIA_LLM_LOCAL_API_KEY:-token-not-needed}"
+    temperature: 0.3
+    max_tokens: 4096
+    timeout_seconds: 90
+
+  claude-sonnet:
+    provider: "cloud_anthropic"
+    model_name: "claude-sonnet-4-20250514"
+    api_key: "${SIA_ANTHROPIC_API_KEY}"
+    temperature: 0.2
+    max_tokens: 4096
+    timeout_seconds: 60
+    extra:
+      proxy: "${SIA_HTTPS_PROXY:-}"
+
+  gemini-pro:
+    provider: "cloud_google"
+    model_name: "gemini-2.5-flash-lite"
+    api_key: "${SIA_GOOGLE_API_KEY}"
+    temperature: 0.2
+    max_tokens: 4096
+    timeout_seconds: 180
+
+  gpt-4o:
+    provider: "cloud_openai"
+    model_name: "gpt-4o"
+    api_key: "${SIA_OPENAI_API_KEY}"
+    temperature: 0.2
+    max_tokens: 4096
+    timeout_seconds: 60
+
+circuit_breaker:
+  failure_threshold: 5
+  recovery_timeout_seconds: 60
+
+failover:
+  enabled: true
+  chains:
+    default:
+      - gemini-pro
+    high_quality:
+      - gemini-pro
+    fast:
+      - gemini-pro
+
+# Cloud data security: fields to anonymize before sending to cloud models
+cloud_anonymization:
+  enabled: true
+  patterns:
+    - type: "ip_internal"
+      regex: "10\\.\\d+\\.\\d+\\.\\d+|172\\.(1[6-9]|2\\d|3[01])\\.\\d+\\.\\d+|192\\.168\\.\\d+\\.\\d+"
+      replacement: "[INTERNAL_IP]"
+    - type: "employee_name"
+      regex: "(?:employee|user|admin):\\s*[A-Za-z\\u4e00-\\u9fff]+"
+      replacement: "[REDACTED_NAME]"
+    - type: "hostname_internal"
+      regex: "[a-zA-Z0-9-]+\\.corp\\.[a-zA-Z0-9.-]+"
+      replacement: "[INTERNAL_HOST]"

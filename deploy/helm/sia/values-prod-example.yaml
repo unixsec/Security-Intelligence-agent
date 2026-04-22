@@ -1,0 +1,101 @@
+# =============================================================================
+# SIA Production Values — Example
+# -----------------------------------------------------------------------------
+# For new deployments, prefer the centralized flow:
+#   cp deploy/deployment.config.example.yaml deployment.config.yaml
+#   ./scripts/deploy/configure.sh --generate-secrets
+# This file documents the equivalent manual Helm values shape.
+# =============================================================================
+
+global:
+  imageRegistry: "<CONTAINER_REGISTRY_URL>"    # e.g. registry.company.com/sia
+  imagePullSecrets:
+    - "<IMAGE_PULL_SECRET_NAME>"
+
+namespace: sia
+
+api:
+  replicaCount: 2
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits:   { cpu: 2000m, memory: 2Gi }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+
+consumer:
+  replicaCount: 1
+  terminationGracePeriodSeconds: 90
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+
+web:
+  enabled: true
+  replicaCount: 2
+
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: "<CERT_MANAGER_CLUSTER_ISSUER>"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+  host: "<INGRESS_HOST>"
+  tls:
+    enabled: true
+    secretName: "<TLS_SECRET_NAME>"
+
+mysql:
+  host: "<MYSQL_HOST>"
+  port: "3306"
+  user: sia
+  database: sia
+  poolSize: "20"
+  tls:
+    mode: required
+    caSecretName: "<MYSQL_CA_SECRET_NAME>"
+
+redis:
+  host: "<REDIS_HOST>"
+  port: "6379"
+  db: "0"
+  tls:
+    enabled: true
+    caSecretName: "<REDIS_CA_SECRET_NAME>"
+
+milvus:
+  host: "<MILVUS_HOST>"
+  port: "19530"
+
+minio:
+  enabled: true
+  host: "<MINIO_HOST>"
+  port: "9000"
+  secure: true
+
+network:
+  egressAllowedCidrs:
+    - "0.0.0.0/0"              # Tighten to corporate egress CIDRs for restricted clusters
+
+observability:
+  otlpEndpoint: ""             # e.g. http://otel-collector.observability:4317
+  logJsonFormat: true
+
+config:
+  env: production
+  logLevel: INFO
+  jwtAlgorithm: RS256          # recommended for prod
+
+# NOTE: NEVER put real secrets here. Use deploy/rendered/sia-secrets.yaml
+# applied via kubectl apply -f, or if you must manage in-chart, pass via
+# helm install --set secrets.manageInChart=true --set secrets.jwtSecret=...
+secrets:
+  manageInChart: false
+
+jobs:
+  migration:
+    enabled: true
+  seed:
+    enabled: true              # set false on subsequent upgrades

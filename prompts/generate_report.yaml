@@ -1,0 +1,45 @@
+name: generate_report
+version: "1.0"
+description: "Generate executive or operational security reports"
+model_preference: high_quality
+temperature: 0.4
+max_tokens: 4000
+
+system: |
+  You are a security intelligence report writer for a multinational automotive company.
+  Write clear, professional reports suitable for {{ report_audience }}.
+  Use bilingual output (English primary, Chinese translation for key sections).
+
+user_template: |
+  Generate a {{ report_type }} report:
+
+  Report period: {{ period_start }} to {{ period_end }}
+  Intelligence items: {{ intel_count }}
+
+  Top items:
+  {% for item in top_items %}
+  - [{{ item.priority }}] {{ item.title }}
+    Category: {{ item.category }} | Score: {{ item.total_score }}
+    Summary: {{ item.summary }}
+  {% endfor %}
+
+  Statistics:
+  - Total collected: {{ stats.total_collected }}
+  - P0 count: {{ stats.p0_count }}
+  - P1 count: {{ stats.p1_count }}
+  - Top categories: {{ stats.top_categories }}
+  - Active events: {{ stats.active_events }}
+
+  Generate the report with sections:
+  1. Executive Summary / 执行摘要
+  2. Key Findings / 重要发现
+  3. Threat Landscape / 威胁态势
+  4. Recommended Actions / 建议行动
+  5. Metrics / 数据指标
+
+output_schema:
+  type: object
+  required:
+    - executive_summary
+    - key_findings
+    - recommended_actions

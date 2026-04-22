@@ -1,0 +1,95 @@
+name: analyze_intel
+version: "1.0"
+description: "Full intelligence analysis pipeline: classify → score → analyze → IOC → store"
+
+steps:
+  - id: classify
+    type: llm_call
+    config:
+      prompt_name: classify_intel
+      chain: default
+      variables:
+        title: "${input.title}"
+        content: "${input.content}"
+        source_name: "${input.source_name}"
+        published_at: "${input.published_at}"
+    output: classification
+    retry:
+      max_attempts: 3
+      backoff: exponential
+      initial_delay_seconds: 2
+
+  - id: score
+    type: llm_call
+    config:
+      prompt_name: score_intel
+      chain: default
+      variables:
+        title: "${input.title}"
+        summary: "${classification.summary_en}"
+        category: "${classification.primary_category}"
+        published_at: "${input.published_at}"
+        cve_id: "${input.cve_id}"
+        cvss_score: "${input.cvss_score}"
+        epss_score: "${input.epss_score}"
+        is_kev: "${input.is_kev}"
+        affected_products: "${input.affected_products}"
+        asset_match: "${input.asset_match}"
+    output: scores
+    retry:
+      max_attempts: 2
+      backoff: fixed
+      initial_delay_seconds: 1
+
+  - id: extract_and_analyze
+    type: parallel
+    steps:
+      - id: extract_iocs
+        type: llm_call
+        config:
+          prompt_name: extract_ioc
+          chain: fast
+          variables:
+            content: "${input.content}"
+        output: iocs
+        retry:
+          max_attempts: 2
+          backoff: fixed
+          initial_delay_seconds: 1
+
+      - id: deep_analysis
+        type: llm_call
+        config:
+          prompt_name: analyze_intel
+          chain: high_quality
+          variables:
+            title: "${input.title}"
+            category: "${classification.primary_category}"
+            content: "${input.content}"
+            cve_id: "${input.cve_id}"
+            cvss_score: "${input.cvss_score}"
+            epss_score: "${input.epss_score}"
+            is_kev: "${input.is_kev}"
+            tags: "${classification.tags}"
+        output: analysis
+        retry:
+          max_attempts: 2
+          backoff: exponential
+          initial_delay_seconds: 3
+
+  - id: persist
+    type: python_func
+    config:
+      function: "sia.analyzer.pipeline:persist_analysis_result"
+      args:
+        intel_id: "${input.intel_id}"
+        classification: "${classification}"
+        scores: "${scores}"
+        iocs: "${iocs}"
+        analysis: "${analysis}"
+    output: persist_result
+
+on_failure:
+  - type: alert
+    config:
+      message: "Intelligence analysis workflow failed: ${error_message}"

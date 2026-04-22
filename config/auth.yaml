@@ -1,0 +1,87 @@
+# =============================================================================
+# SIA Authentication Configuration
+# Environment variables override: SIA_AUTH_<key>
+# =============================================================================
+
+# JWT settings
+# -------------------------------------------------------------------
+# secret_key / algorithm / keys are loaded from K8s Secret or env var.
+# No defaults — production startup fails if SIA_AUTH_JWT_SECRET (HS256)
+# or SIA_AUTH_JWT_PRIVATE_KEY + SIA_AUTH_JWT_PUBLIC_KEY (RS256) are unset.
+# See src/sia/config.py:AuthSecretSettings.
+# -------------------------------------------------------------------
+jwt:
+  secret_key: "${SIA_AUTH_JWT_SECRET}"
+  algorithm: "${SIA_AUTH_JWT_ALGORITHM:-HS256}"   # HS256 | RS256
+  private_key: "${SIA_AUTH_JWT_PRIVATE_KEY}"       # base64-encoded PEM, only for RS256
+  public_key: "${SIA_AUTH_JWT_PUBLIC_KEY}"         # base64-encoded PEM, only for RS256
+  access_token_expire_minutes: 30
+  refresh_token_expire_days: 7
+
+# Account lockout policy
+lockout:
+  max_failed_attempts: 5
+  lockout_duration_minutes: 30
+
+# Password policy
+password:
+  min_length: 8
+  require_uppercase: true
+  require_lowercase: true
+  require_digit: true
+  require_special: false
+
+# OIDC providers (multiple supported)
+# Uncomment and configure for your identity provider
+oidc:
+  enabled: false
+  providers:
+    # Example: Azure AD
+    # azure:
+    #   display_name: "Azure AD SSO"
+    #   issuer: "https://login.microsoftonline.com/{tenant-id}/v2.0"
+    #   client_id: "${SIA_OIDC_AZURE_CLIENT_ID}"
+    #   client_secret: "${SIA_OIDC_AZURE_CLIENT_SECRET}"
+    #   scopes: ["openid", "profile", "email"]
+    #   auto_create_user: true
+    #   default_role: "viewer"
+
+    # Example: Keycloak
+    # keycloak:
+    #   display_name: "Keycloak SSO"
+    #   issuer: "https://keycloak.company.com/realms/sia"
+    #   client_id: "${SIA_OIDC_KC_CLIENT_ID}"
+    #   client_secret: "${SIA_OIDC_KC_CLIENT_SECRET}"
+    #   scopes: ["openid", "profile", "email"]
+    #   auto_create_user: true
+    #   default_role: "viewer"
+    #   role_claim: "realm_access.roles"
+    #   role_mapping:
+    #     sia-admin: "admin"
+    #     sia-analyst: "analyst"
+
+# LDAP / Active Directory
+ldap:
+  enabled: false
+  # server: "ldap://ldap.company.com:389"
+  # use_ssl: false
+  # start_tls: true
+  # bind_dn: "CN=sia-service,OU=Services,DC=company,DC=com"
+  # bind_password: "${SIA_LDAP_BIND_PASSWORD}"
+  # user_search_base: "OU=Users,DC=company,DC=com"
+  # user_search_filter: "(sAMAccountName={username})"
+  # username_attribute: "sAMAccountName"
+  # email_attribute: "mail"
+  # display_name_attribute: "displayName"
+  # group_search_base: "OU=Groups,DC=company,DC=com"
+  # group_search_filter: "(member={user_dn})"
+  # auto_create_user: true
+  # default_role: "viewer"
+  # role_mapping:
+  #   "CN=SIA-Admins,OU=Groups,DC=company,DC=com": "admin"
+  #   "CN=SIA-Analysts,OU=Groups,DC=company,DC=com": "analyst"
+
+# API Key authentication (for programmatic access, kept alongside JWT)
+api_key:
+  enabled: true
+  header_name: "X-API-Key"

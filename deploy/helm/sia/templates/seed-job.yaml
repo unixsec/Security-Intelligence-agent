@@ -1,0 +1,59 @@
+{{- if .Values.jobs.seed.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: sia-db-seed-{{ .Release.Revision }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sia.labels" . | nindent 4 }}
+    app.kubernetes.io/component: seed
+  annotations:
+    helm.sh/hook: post-install
+    helm.sh/hook-weight: "2"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 120
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sia
+        app.kubernetes.io/component: seed
+    spec:
+      {{- include "sia.imagePullSecrets" . | nindent 6 }}
+      restartPolicy: OnFailure
+      securityContext:
+        {{- include "sia.podSecurityContext" . | nindent 8 }}
+      volumes:
+        {{- include "sia.writableVolumes" . | nindent 8 }}
+        {{- include "sia.secretsVolume" . | nindent 8 }}
+        {{- include "sia.tlsVolumes" . | nindent 8 }}
+      containers:
+        - name: seed
+          image: {{ include "sia.image" (dict "global" .Values.global "image" .Values.api.image "chartVersion" .Chart.AppVersion) }}
+          securityContext:
+            {{- include "sia.containerSecurityContext" . | nindent 12 }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              python scripts/ops/seed_sources.py && \
+              python scripts/ops/seed_scoring.py && \
+              python scripts/ops/init_admin.py && \
+              echo "Seed complete"
+          envFrom:
+            - configMapRef:
+                name: sia-config
+          env:
+            {{- include "sia.backendEnv" . | nindent 12 }}
+          volumeMounts:
+            {{- include "sia.writableVolumeMounts" . | nindent 12 }}
+            {{- include "sia.secretsVolumeMount" . | nindent 12 }}
+            {{- include "sia.tlsVolumeMounts" . | nindent 12 }}
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+{{- end }}

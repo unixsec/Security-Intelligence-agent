@@ -1,0 +1,48 @@
+name: generate_report
+version: "1.0"
+description: "Generate and distribute security intelligence reports"
+
+steps:
+  - id: gather_data
+    type: python_func
+    config:
+      function: "sia.reporter.service:gather_report_data"
+      args:
+        report_type: "${input.report_type}"
+        period_start: "${input.period_start}"
+        period_end: "${input.period_end}"
+    output: report_data
+
+  - id: generate
+    type: llm_call
+    config:
+      prompt_name: generate_report
+      chain: high_quality
+      variables:
+        report_type: "${input.report_type}"
+        report_audience: "${input.audience}"
+        period_start: "${input.period_start}"
+        period_end: "${input.period_end}"
+        intel_count: "${report_data.intel_count}"
+        top_items: "${report_data.top_items}"
+        stats: "${report_data.stats}"
+    output: report_content
+    retry:
+      max_attempts: 2
+      backoff: exponential
+      initial_delay_seconds: 5
+
+  - id: save_and_push
+    type: python_func
+    config:
+      function: "sia.reporter.service:save_and_distribute"
+      args:
+        report_type: "${input.report_type}"
+        content: "${report_content}"
+        report_data: "${report_data}"
+    output: distribution_result
+
+on_failure:
+  - type: alert
+    config:
+      message: "Report generation failed: ${error_message}"

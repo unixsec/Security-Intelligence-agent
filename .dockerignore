@@ -1,0 +1,43 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.venv
+venv
+.mypy_cache
+.pytest_cache
+.ruff_cache
+htmlcov
+.coverage
+dist
+build
+
+# Node
+web/node_modules
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Docs & tests (not needed in production image)
+docs/
+tests/
+*.md
+LICENSE
+
+# Local dev
+.env
+.env.*
+docker-compose*.yml
+scripts/vm/
+
+# Deploy meta (avoid recursive context)
+deploy/helm/
+.github/

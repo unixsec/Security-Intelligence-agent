@@ -1,0 +1,14 @@
+apiVersion: v2
+name: sia
+description: Security Intelligence Agent — AI-powered threat intelligence platform
+type: application
+version: 0.2.0
+appVersion: "0.2.0"
+keywords:
+  - security
+  - intelligence
+  - threat
+  - llm
+maintainers:
+  - name: alex
+    email: unix_sec@163.com
