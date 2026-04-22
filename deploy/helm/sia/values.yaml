@@ -1,0 +1,208 @@
+# =============================================================================
+# SIA Helm Chart — Default Values
+#
+# Enterprise deployments should NOT edit this file. Instead:
+#   1. Fill deploy/deployment.config.example.yaml (copied to deployment.config.yaml)
+#   2. Run  ./scripts/deploy/configure.sh --generate-secrets
+#      — it produces deploy/helm/sia/values-prod.yaml + rendered secrets.
+# =============================================================================
+
+global:
+  imageRegistry: ""           # e.g. "registry.company.com/sia"
+  imagePullSecrets: []
+
+namespace: sia
+
+# =============================================================================
+# Backend API
+# =============================================================================
+api:
+  replicaCount: 2
+  image:
+    repository: sia-backend
+    tag: ""                   # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  command: []
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: 2000m, memory: 2Gi }
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPU: 70
+    targetMemory: 80
+  service:
+    type: ClusterIP
+    port: 8080
+  probes:
+    liveness:
+      path: /api/v1/health
+      initialDelaySeconds: 15
+      periodSeconds: 30
+      timeoutSeconds: 10
+    readiness:
+      path: /api/v1/health
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+    startup:
+      path: /api/v1/health
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      failureThreshold: 12
+  podDisruptionBudget:
+    minAvailable: 1
+
+# =============================================================================
+# Analysis Consumer
+# =============================================================================
+consumer:
+  replicaCount: 1
+  image:
+    repository: sia-backend
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+  terminationGracePeriodSeconds: 90   # SEC-018
+
+# =============================================================================
+# Frontend (Nginx, unprivileged)
+# =============================================================================
+web:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: sia-web
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+  service:
+    type: ClusterIP
+    port: 80                  # Service port; container now listens on 8080
+
+# =============================================================================
+# Ingress
+# =============================================================================
+ingress:
+  enabled: true
+  className: nginx
+  annotations: {}             # cert-manager.io/cluster-issuer: letsencrypt-prod
+  host: sia.example.com
+  tls:
+    enabled: false
+    secretName: sia-tls
+
+# =============================================================================
+# Application Config (non-secret)
+# =============================================================================
+config:
+  env: production
+  logLevel: INFO
+  apiHost: "0.0.0.0"
+  apiPort: "8080"
+  promptsDir: /app/prompts
+  workflowsDir: /app/workflows
+  configDir: /app/config
+  jwtAlgorithm: HS256         # HS256 | RS256
+
+# =============================================================================
+# External MySQL
+# =============================================================================
+mysql:
+  host: sia-mysql
+  port: "3306"
+  user: sia
+  database: sia
+  poolSize: "10"
+  tls:
+    mode: disabled            # disabled | preferred | required
+    caPath: "/etc/sia/tls/mysql/ca.crt"
+    caSecretName: ""          # K8s Secret with key "ca.crt"
+
+# =============================================================================
+# External Redis
+# =============================================================================
+redis:
+  host: sia-redis
+  port: "6379"
+  db: "0"
+  tls:
+    enabled: false
+    caPath: "/etc/sia/tls/redis/ca.crt"
+    caSecretName: ""
+
+# =============================================================================
+# Milvus
+# =============================================================================
+milvus:
+  host: sia-milvus
+  port: "19530"
+  collectionName: intel_vectors
+
+# =============================================================================
+# MinIO
+# =============================================================================
+minio:
+  enabled: true
+  host: sia-minio
+  port: "9000"
+  bucket: sia-reports
+  secure: true
+
+# =============================================================================
+# Network policy
+# =============================================================================
+network:
+  egressAllowedCidrs:
+    - "0.0.0.0/0"             # internet egress; tighten in prod
+
+# =============================================================================
+# Observability
+# =============================================================================
+observability:
+  otlpEndpoint: ""
+  logJsonFormat: true
+
+# =============================================================================
+# Security add-ons (require operator-level components in cluster)
+# =============================================================================
+security:
+  falcoRulesEnabled: false
+  gatekeeperConstraintsEnabled: false
+
+# =============================================================================
+# Secrets
+#   Default path: separate Secret manifest rendered by configure.sh, applied
+#   via kubectl apply -f deploy/rendered/sia-secrets.yaml.
+#   Set manageInChart=true ONLY for manual installs without configure.sh.
+# =============================================================================
+secrets:
+  manageInChart: false
+  jwtSecret: ""
+  jwtAlgorithm: HS256
+  jwtPrivateKey: ""
+  jwtPublicKey: ""
+  apiKey: ""
+  adminPassword: ""
+  mysqlPassword: ""
+  redisPassword: ""
+  minioAccessKey: ""
+  minioSecretKey: ""
+  milvusToken: ""
+  googleApiKey: ""
+  anthropicApiKey: ""
+  openaiApiKey: ""
+
+# =============================================================================
+# Post-install jobs
+# =============================================================================
+jobs:
+  migration:
+    enabled: true
+  seed:
+    enabled: true

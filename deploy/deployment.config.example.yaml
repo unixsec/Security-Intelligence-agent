@@ -1,0 +1,185 @@
+# =============================================================================
+# SIA Enterprise K8s Deployment — Centralized Configuration Template
+# -----------------------------------------------------------------------------
+# USAGE:
+#   1. cp deploy/deployment.config.example.yaml deployment.config.yaml
+#   2. Replace every <UPPER_SNAKE> placeholder with your real value.
+#   3. ./scripts/deploy/configure.sh [--generate-secrets]
+#   4. ./scripts/deploy/deploy-k8s.sh
+#
+# FILE IS GITIGNORED. Never commit the concrete deployment.config.yaml.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Cluster target
+# -----------------------------------------------------------------------------
+cluster:
+  # kubectl context to use. Run:  kubectl config current-context
+  context: "<K8S_CONTEXT>"
+  # Namespace to install into. Created if missing.
+  namespace: "sia"
+
+# -----------------------------------------------------------------------------
+# Container registry & image pull
+# -----------------------------------------------------------------------------
+registry:
+  # Full registry path, e.g. registry.company.com/sia  or  harbor.internal/teams/sia
+  url: "<CONTAINER_REGISTRY_URL>"
+  # Name of an existing K8s Secret (type=kubernetes.io/dockerconfigjson) used for pulls.
+  # Leave as "" for anonymous/public registries.
+  pullSecret: "<IMAGE_PULL_SECRET_NAME>"
+  # Set true to build + push images from this machine as part of deploy.
+  # Set false if CI already built & pushed; deploy-k8s.sh will then use --skip-build --skip-push.
+  buildLocally: true
+
+# -----------------------------------------------------------------------------
+# Ingress & TLS
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: "nginx"
+  # Fully-qualified hostname, e.g. sia.company.com
+  host: "<INGRESS_HOST>"
+  tls:
+    enabled: true
+    # Either: existing K8s Secret holding tls.crt/tls.key (set secretName), OR
+    # blank secretName + clusterIssuer => cert-manager will mint a certificate.
+    secretName: "<TLS_SECRET_NAME>"
+    # cert-manager ClusterIssuer to use if secretName is empty. Leave "" to skip cert-manager.
+    clusterIssuer: "<CERT_MANAGER_CLUSTER_ISSUER>"
+
+# -----------------------------------------------------------------------------
+# External datastores (managed services strongly recommended)
+# -----------------------------------------------------------------------------
+mysql:
+  host: "<MYSQL_HOST>"                  # e.g. rds-mysql.internal.company.com
+  port: 3306
+  database: "sia"
+  user: "sia"
+  # TLS mode: disabled | preferred | required  (required is the enterprise default)
+  tls:
+    mode: "required"
+    # Path INSIDE container where CA cert is mounted. Leave default unless you customize.
+    caPath: "/etc/sia/tls/mysql-ca.crt"
+    # Name of a K8s Secret in the target namespace that contains key "ca.crt".
+    # Leave "" to skip mounting (only valid when tls.mode=disabled).
+    caSecretName: "<MYSQL_CA_SECRET_NAME>"
+
+redis:
+  host: "<REDIS_HOST>"                  # e.g. redis.internal.company.com
+  port: 6379
+  db: 0
+  tls:
+    enabled: true
+    caPath: "/etc/sia/tls/redis-ca.crt"
+    caSecretName: "<REDIS_CA_SECRET_NAME>"
+
+milvus:
+  host: "<MILVUS_HOST>"
+  port: 19530
+  collectionName: "intel_vectors"
+
+minio:
+  # Leave host "" and enabled=false if you don't use MinIO / report bucket.
+  enabled: true
+  host: "<MINIO_HOST>"
+  port: 9000
+  bucket: "sia-reports"
+  secure: true                          # https to MinIO
+
+# -----------------------------------------------------------------------------
+# Secrets
+# -----------------------------------------------------------------------------
+# Leave any value as "<...>" to force configure.sh --generate-secrets to fill it
+# with a cryptographically random value. Never commit this file.
+# -----------------------------------------------------------------------------
+secrets:
+  # JWT signing key. Required. At least 32 hex chars. openssl rand -hex 32
+  jwtSecret: "<JWT_SECRET_HEX32>"
+  # JWT algorithm: HS256 (symmetric) | RS256 (asymmetric, recommended for prod).
+  # For RS256, also fill jwtPrivateKey/jwtPublicKey (PEM, base64-encoded).
+  jwtAlgorithm: "RS256"
+  jwtPrivateKey: "<JWT_PRIVATE_KEY_PEM_BASE64>"    # required iff jwtAlgorithm=RS256
+  jwtPublicKey:  "<JWT_PUBLIC_KEY_PEM_BASE64>"     # required iff jwtAlgorithm=RS256
+
+  # X-API-Key header value used by programmatic clients. openssl rand -hex 32
+  apiKey: "<SIA_API_KEY>"
+
+  # Initial admin password. Rotated on first login.
+  adminPassword: "<ADMIN_INIT_PASSWORD>"
+
+  # External datastore credentials
+  mysqlPassword: "<MYSQL_PASSWORD>"
+  redisPassword: "<REDIS_PASSWORD>"             # "" if Redis requires no auth (uncommon)
+  minioAccessKey: "<MINIO_ACCESS_KEY>"
+  minioSecretKey: "<MINIO_SECRET_KEY>"
+  milvusToken: ""                               # optional; set if Milvus auth is enabled
+
+  # LLM provider API keys. Any may be left "" if unused.
+  googleApiKey: "<GOOGLE_GEMINI_API_KEY>"
+  anthropicApiKey: ""
+  openaiApiKey: ""
+
+# -----------------------------------------------------------------------------
+# Workload sizing
+# -----------------------------------------------------------------------------
+resources:
+  api:
+    replicas: 2
+    requests: { cpu: "500m", memory: "1Gi" }
+    limits:   { cpu: "2000m", memory: "2Gi" }
+  consumer:
+    replicas: 1
+    requests: { cpu: "250m", memory: "512Mi" }
+    limits:   { cpu: "1000m", memory: "1Gi" }
+  web:
+    replicas: 2
+    requests: { cpu: "50m", memory: "64Mi" }
+    limits:   { cpu: "500m", memory: "256Mi" }
+
+autoscaling:
+  api:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilizationPercentage: 70
+
+# -----------------------------------------------------------------------------
+# Network egress policy
+# -----------------------------------------------------------------------------
+network:
+  # Outbound HTTPS proxy for reaching cloud LLM providers from a closed network.
+  # Leave "" if direct egress is allowed.
+  httpsProxy: ""
+  # CIDRs the pods are allowed to egress to on 443/80 (LLM APIs, RSS feeds, NVD/CISA).
+  # Tighten for air-gapped / restricted clusters. Default allows internet.
+  egressAllowedCidrs:
+    - "0.0.0.0/0"
+
+# -----------------------------------------------------------------------------
+# Observability
+# -----------------------------------------------------------------------------
+observability:
+  # OpenTelemetry collector endpoint, e.g. http://otel-collector.observability:4317
+  # Leave "" to disable OTLP export.
+  otlpEndpoint: ""
+  logJsonFormat: true
+
+# -----------------------------------------------------------------------------
+# Optional cluster-security features
+# -----------------------------------------------------------------------------
+security:
+  # Deploy Falco runtime-detection rules (requires Falco already installed in cluster).
+  falcoRulesEnabled: false
+  # Deploy sample Gatekeeper constraints (requires OPA Gatekeeper installed).
+  gatekeeperConstraintsEnabled: false
+
+# -----------------------------------------------------------------------------
+# DB init jobs (post-install)
+# -----------------------------------------------------------------------------
+jobs:
+  migration:
+    enabled: true       # alembic upgrade head
+  seed:
+    enabled: true       # run scripts/ops/init_admin.py, seed_sources.py, seed_scoring.py
+                        # safe to set false on subsequent upgrades

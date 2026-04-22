@@ -1,0 +1,67 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sia-network-policy
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sia.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: sia
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Ingress controller → web (8080) + api (8080)
+    - from:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ingress-nginx
+      ports:
+        - port: 8080
+          protocol: TCP
+    # Intra-release (web → api, consumer → api if needed)
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: sia
+  egress:
+    # DNS
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # MySQL
+    - ports:
+        - port: {{ .Values.mysql.port | int }}
+          protocol: TCP
+    # Redis
+    - ports:
+        - port: {{ .Values.redis.port | int }}
+          protocol: TCP
+    # Milvus
+    - ports:
+        - port: {{ .Values.milvus.port | int }}
+          protocol: TCP
+    {{- if .Values.minio.enabled }}
+    # MinIO
+    - ports:
+        - port: {{ .Values.minio.port | int }}
+          protocol: TCP
+    {{- end }}
+    # Outbound HTTPS/HTTP (LLM APIs, RSS, NVD/CISA). Tighten via egressAllowedCidrs.
+    - to:
+        {{- range .Values.network.egressAllowedCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - port: 443
+          protocol: TCP
+        - port: 80
+          protocol: TCP

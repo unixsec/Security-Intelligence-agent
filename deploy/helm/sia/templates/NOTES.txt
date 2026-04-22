@@ -1,0 +1,18 @@
+============================================================
+  SIA — Security Intelligence Agent v{{ .Chart.AppVersion }}
+============================================================
+
+Namespace : {{ .Values.namespace }}
+API       : sia-api.{{ .Values.namespace }}.svc:{{ .Values.api.service.port }}
+{{- if .Values.web.enabled }}
+Web       : sia-web.{{ .Values.namespace }}.svc:{{ .Values.web.service.port }}
+{{- end }}
+{{- if .Values.ingress.enabled }}
+Ingress   : {{ if .Values.ingress.tls.enabled }}https{{ else }}http{{ end }}://{{ .Values.ingress.host }}
+{{- end }}
+
+Quick verify:
+  kubectl get pods -n {{ .Values.namespace }}
+  kubectl logs -f deployment/sia-api -n {{ .Values.namespace }}
+  kubectl port-forward svc/sia-api 8080:{{ .Values.api.service.port }} -n {{ .Values.namespace }}
+  curl -H "X-API-Key: <your-key>" http://localhost:8080/api/v1/health

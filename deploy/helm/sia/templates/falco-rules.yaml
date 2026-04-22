@@ -1,0 +1,50 @@
+{{- if .Values.security.falcoRulesEnabled }}
+# SEC-012 — Falco custom rules for SIA workloads.
+# Activate with: --set security.falcoRulesEnabled=true (requires Falco already installed in cluster).
+# Falco reads rules ConfigMaps with label  falco.io/rule=true.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sia-falco-rules
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sia.labels" . | nindent 4 }}
+    falco.io/rule: "true"
+data:
+  sia_rules.yaml: |
+    - macro: sia_container
+      condition: (container.image.repository in ("sia-backend", "sia-web") or
+                   k8s.ns.name = {{ .Values.namespace | quote }})
+
+    - rule: SIA — Shell spawned in container
+      desc: A shell was spawned inside a SIA pod; shells should never run at runtime.
+      condition: spawned_process and sia_container and proc.name in (sh, bash, zsh, ash, dash)
+      output: "Shell spawned in SIA container (user=%user.name container=%container.name cmdline=%proc.cmdline)"
+      priority: WARNING
+      tags: [sia, container, shell, process]
+
+    - rule: SIA — Write to /etc in container
+      desc: Unexpected write to /etc inside a SIA pod (readOnlyRootFilesystem should block this).
+      condition: open_write and sia_container and fd.name startswith "/etc"
+      output: "Write to /etc inside SIA container (file=%fd.name process=%proc.name)"
+      priority: ERROR
+      tags: [sia, filesystem, integrity]
+
+    - rule: SIA — Outbound connection to unexpected port
+      desc: SIA pod connected to a port not in its allowlist (DB/Redis/Milvus/443/80/53).
+      condition: >
+        outbound and sia_container and
+        not (fd.sport in (3306, 6379, 19530, 9000, 443, 80, 53))
+      output: "Unexpected outbound connection (dest=%fd.rip:%fd.rport process=%proc.name)"
+      priority: WARNING
+      tags: [sia, network]
+
+    - rule: SIA — Secret file read by unexpected process
+      desc: Non-Python process reading mounted secrets directory.
+      condition: >
+        open_read and sia_container and fd.name startswith "/etc/sia/secrets"
+        and not proc.name in (python, python3, python3.12)
+      output: "Non-Python read of /etc/sia/secrets (process=%proc.name file=%fd.name)"
+      priority: ERROR
+      tags: [sia, secrets]
+{{- end }}

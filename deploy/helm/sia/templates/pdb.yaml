@@ -1,0 +1,13 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: sia-api-pdb
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sia.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.api.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sia
+      app.kubernetes.io/component: api

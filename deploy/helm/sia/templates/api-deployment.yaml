@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sia-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sia.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sia
+      app.kubernetes.io/component: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sia
+        app.kubernetes.io/component: api
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      {{- include "sia.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- include "sia.podSecurityContext" . | nindent 8 }}
+      {{- include "sia.topologySpread" (dict "component" "api") | nindent 6 }}
+      terminationGracePeriodSeconds: 30
+      volumes:
+        {{- include "sia.writableVolumes" . | nindent 8 }}
+        {{- include "sia.secretsVolume" . | nindent 8 }}
+        {{- include "sia.tlsVolumes" . | nindent 8 }}
+      containers:
+        - name: sia-api
+          image: {{ include "sia.image" (dict "global" .Values.global "image" .Values.api.image "chartVersion" .Chart.AppVersion) }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          securityContext:
+            {{- include "sia.containerSecurityContext" . | nindent 12 }}
+          {{- if .Values.api.command }}
+          command: {{ toYaml .Values.api.command | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: sia-config
+          env:
+            {{- include "sia.backendEnv" . | nindent 12 }}
+          volumeMounts:
+            {{- include "sia.writableVolumeMounts" . | nindent 12 }}
+            {{- include "sia.secretsVolumeMount" . | nindent 12 }}
+            {{- include "sia.tlsVolumeMounts" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.api.probes.liveness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.api.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.api.probes.liveness.timeoutSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.api.probes.readiness.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.api.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.api.probes.readiness.timeoutSeconds }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.api.probes.startup.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.api.probes.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.api.probes.startup.failureThreshold }}

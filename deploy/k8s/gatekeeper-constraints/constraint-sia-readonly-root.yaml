@@ -1,0 +1,11 @@
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sReadOnlyRootFS
+metadata:
+  name: sia-require-readonly-rootfs
+spec:
+  enforcementAction: dryrun   # switch to "deny" after soak
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces: ["sia"]
