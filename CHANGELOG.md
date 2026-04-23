@@ -4,7 +4,37 @@ All notable changes to SIA. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
-### Added
+### Added — Enterprise hardening (Top-5 must-fix from ARCHITECTURE_REVIEW.md)
+- **SSRF defence** in Collector: new `src/sia/collector/url_validator.py` rejects
+  non-http(s) schemes, loopback/RFC1918/link-local (cloud metadata) IPs, and
+  over-long URLs. `fetcher.py` now disables auto-redirect and re-validates each
+  hop; response size cap (20 MiB) and Content-Type whitelist enforced.
+- **Distributed lock for scheduler** (`src/sia/scheduler/distributed_lock.py`):
+  Redis `SET NX EX` + token-guarded Lua DEL implements a redlock-lite so only
+  one `sia-api` replica runs each cron. All four jobs decorated with
+  `@with_leader_lock`.
+- **Audit hash chain** (`src/sia/common/audit.py`): `audit()` now persists to
+  the `audit_log` table with a SHA-256 chain; `scripts/ops/verify_audit_chain.py`
+  walks the chain and exits non-zero on any break (run daily).
+- **Outbox Publisher** (`src/sia/common/outbox.py`): long-running drain task
+  started alongside the analyzer; `SELECT … FOR UPDATE SKIP LOCKED` for
+  multi-publisher safety; exponential retry; capped at 5 attempts before
+  moving rows to `failed`.
+- **Backup / DR tooling**:
+  - `scripts/ops/backup_mysql.sh` — full dump + SHA-256 sidecar
+  - `scripts/ops/restore_mysql.sh` — stage-then-swap with verification
+  - `scripts/ops/rebuild_vectors.py` — rebuild Milvus from MySQL
+  - `scripts/ops/reconcile_analyzing.py` — re-queue orphaned analyzing rows
+  - `scripts/ops/dr_drill.sh` — end-to-end sandbox drill with RTO measurement
+  - `docs/RUNBOOKS/DR.md` — 5-class DR playbook (outage / data loss / NS /
+    region / drill), explicit RPO/RTO per tier.
+- Unit tests: `test_url_validator.py`, `test_distributed_lock.py`,
+  `test_audit_chain.py`, `test_outbox.py` (+36 tests, patterns covered).
+- `docs/ARCHITECTURE_REVIEW.md` — Chief Architect enterprise-readiness review
+  (20 code-level claims verified + 10 architecture-level gap dimensions +
+  prioritised roadmap).
+
+### Added — License
 - `LICENSE` file (Apache License 2.0). Project license changed from `Proprietary` to `Apache-2.0`.
 - Image labels `org.opencontainers.image.licenses=Apache-2.0` and `org.opencontainers.image.source` on both backend and web images.
 - Helm Chart `annotations.licenses: Apache-2.0` and `sources` pointing to the upstream repo.
