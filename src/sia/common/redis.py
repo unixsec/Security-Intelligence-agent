@@ -26,7 +26,15 @@ def _build_url_and_kwargs() -> tuple[str, dict]:
     auth = f":{s.password}@" if s.password else ""
     scheme = "rediss" if s.tls_enabled else "redis"
     url = f"{scheme}://{auth}{s.host}:{s.port}/{s.db}"
-    kwargs: dict = {"decode_responses": True}
+    kwargs: dict = {
+        "decode_responses": True,
+        # Transient recovery: retry on connect/timeout once before surfacing
+        # the error to resilient_call (which will then back off + retry again).
+        "socket_connect_timeout": 5.0,
+        "socket_keepalive": True,
+        "health_check_interval": 30,
+        "retry_on_timeout": True,
+    }
     if s.tls_enabled:
         kwargs["ssl_cert_reqs"] = "required"
         if s.tls_ca_path and os.path.exists(s.tls_ca_path):

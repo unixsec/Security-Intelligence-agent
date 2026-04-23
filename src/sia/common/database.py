@@ -1,4 +1,10 @@
-"""Database connection and session management."""
+"""Database connection and session management.
+
+Uses `pool_pre_ping=True` so broken connections are discarded before use
+(instead of surfacing as OperationalError on first query). Callers that
+need bounded retries on transient outages should wrap their call in
+`sia.common.resilience.resilient_call(db_breaker, ...)`.
+"""
 
 from __future__ import annotations
 
@@ -33,6 +39,7 @@ def get_engine() -> AsyncEngine:
             settings.db.async_url,
             pool_size=settings.db.pool_size,
             pool_recycle=settings.db.pool_recycle,
+            pool_pre_ping=True,              # SEC: detect stale connections
             echo=settings.debug,
             connect_args=settings.db.async_connect_args(),
         )
@@ -73,6 +80,20 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
+
+
+# Convenience wrapper for CB-guarded ad-hoc queries.
+# Prefer an explicit `resilient_call(db_breaker, ...)` at the call site for
+# clarity — this exists for places that want a one-liner.
+async def resilient_db_execute(fn, *args, **kwargs):
+    """Execute `fn(session, *args)` in a CB-guarded, retryable transaction."""
+    from sia.common.resilience import db_breaker, resilient_call
+
+    async def _op():
+        async with get_db_context() as session:
+            return await fn(session, *args, **kwargs)
+
+    return await resilient_call(db_breaker, _op)
 
 
 async def init_db() -> None:
