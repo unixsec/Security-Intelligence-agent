@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "private": true,
   "author": "alex <unix_sec@163.com>",
+  "license": "Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

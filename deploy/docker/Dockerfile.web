@@ -18,7 +18,10 @@ FROM nginxinc/nginx-unprivileged:1.27-alpine
 
 LABEL maintainer="alex <unix_sec@163.com>" \
       org.opencontainers.image.title="sia-web" \
-      org.opencontainers.image.description="Security Intelligence Agent — Frontend"
+      org.opencontainers.image.description="Security Intelligence Agent — Frontend" \
+      org.opencontainers.image.version="0.2.0" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.source="https://github.com/unixsec/Security-Intelligence-agent"
 
 USER 0
 RUN rm -rf /usr/share/nginx/html/*

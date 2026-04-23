@@ -2,6 +2,20 @@
 
 All notable changes to SIA. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `LICENSE` file (Apache License 2.0). Project license changed from `Proprietary` to `Apache-2.0`.
+- Image labels `org.opencontainers.image.licenses=Apache-2.0` and `org.opencontainers.image.source` on both backend and web images.
+- Helm Chart `annotations.licenses: Apache-2.0` and `sources` pointing to the upstream repo.
+
+### Changed
+- `pyproject.toml` `license = {text = "Apache-2.0"}` (+ `license-files`).
+- `web/package.json` `"license": "Apache-2.0"`.
+- `README.md` now shows the Apache 2.0 notice block.
+
+---
+
 ## [0.2.0] — 2026-04-22
 
 ### Added
