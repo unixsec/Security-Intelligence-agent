@@ -140,8 +140,19 @@ async def save_and_distribute(
     report_type: str,
     content: dict,
     report_data: dict,
+    pdf_bytes: bytes | None = None,
+    html_bytes: bytes | None = None,
 ) -> dict:
-    """Save the generated report and trigger distribution."""
+    """Save the generated report, archive artifacts to MinIO, trigger push.
+
+    PDF / HTML bytes, when present, are uploaded to MinIO via
+    `safe_put_report`. The returned object key is stored on
+    `Report.pdf_path`. MinIO outages do NOT block DB persistence —
+    `safe_put_report` absorbs CircuitOpenError and returns None.
+    """
+    from sia.common.minio_client import safe_put_report
+    from sia.config import get_settings
+
     async with get_db_context() as session:
         stats = report_data.get("stats", {})
         report = Report(
@@ -170,6 +181,30 @@ async def save_and_distribute(
                 report_id=report_id,
                 intel_id=item["id"],
             ))
+
+    # Archive to MinIO (best-effort; outside the DB tx to avoid holding locks
+    # on network IO)
+    if get_settings().minio.enabled and (pdf_bytes or html_bytes):
+        object_key = None
+        if pdf_bytes:
+            object_key = await safe_put_report(
+                report_id=report_id, report_type=report_type,
+                content_bytes=pdf_bytes, content_type="application/pdf",
+            )
+        elif html_bytes:
+            object_key = await safe_put_report(
+                report_id=report_id, report_type=report_type,
+                content_bytes=html_bytes, content_type="text/html",
+            )
+        if object_key:
+            # Second small tx to update pdf_path; keeps the main tx snappy
+            from sqlalchemy import update as sql_update
+            async with get_db_context() as session:
+                await session.execute(
+                    sql_update(Report)
+                    .where(Report.id == report_id)
+                    .values(pdf_path=object_key)
+                )
 
     # Publish push task
     await publish_to_stream(STREAM_PUSH_TASK, {
