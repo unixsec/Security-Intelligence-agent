@@ -4,6 +4,37 @@ All notable changes to SIA. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+### Added — v0.3.0 enterprise baseline (remaining 5 items from ARCHITECTURE_REVIEW §D)
+- **DB / Redis resilience** (`src/sia/common/resilience.py`): per-dependency
+  CircuitBreaker + bounded exponential-backoff retry for MySQL / Redis /
+  Milvus / MinIO. `pool_pre_ping=True` on MySQL; Redis now has
+  `retry_on_timeout` + `socket_keepalive` + `health_check_interval=30`.
+  New `@resilient(db_breaker)` decorator and `resilient_db_execute` helper.
+  10 unit tests.
+- **First-login password change** (SEC): `/api/v1/auth/login` returns
+  `password_change_required: true` when `user.password_changed_at` is NULL
+  (seed admin). New `POST /api/v1/auth/change-password` endpoint enforces
+  the password policy from `config/auth.yaml`, revokes existing refresh
+  tokens, and emits `user.password_change` audit events. 8 unit tests.
+- **MinIO report archival** (`src/sia/common/minio_client.py`): closes the
+  design-vs-code gap where MinIO was configured but never called.
+  `ensure_bucket()` at startup, `put_report()` with typed object-key layout
+  `<type>/YYYY/MM/report-<id>.<ext>`, `safe_put_report()` that absorbs
+  CB-open and never blocks DB writes. `reporter.save_and_distribute` now
+  uploads PDF/HTML bytes and writes the object key to `Report.pdf_path`.
+  5 unit tests.
+- **Integration test scaffold** (`tests/integration/`): `testcontainers`
+  MySQL 8 + Redis 7 per-session fixtures; ASGITransport `AsyncClient`
+  bound to FastAPI in-process; covers health + API-key + login flow +
+  first-login password-change + audit chain tamper detection. Gated by
+  `@requires_docker` so Windows runners skip cleanly.
+- **Helm CronJobs**: `cronjob-backup.yaml` (daily 02:15 UTC, `backup_mysql.sh`
+  to a PVC), `cronjob-verify-audit.yaml` (daily 03:00 UTC, exits non-zero on
+  chain break), `cronjob-reconcile.yaml` (every 15 min, `reconcile_analyzing.py`).
+  All use the same hardened pod security context as the main Deployments;
+  all gated on `values.yaml` flags (`backup.enabled` / `audit.verifyChain.enabled`
+  / `reconcile.enabled`).
+
 ### Added — Enterprise hardening (Top-5 must-fix from ARCHITECTURE_REVIEW.md)
 - **SSRF defence** in Collector: new `src/sia/collector/url_validator.py` rejects
   non-http(s) schemes, loopback/RFC1918/link-local (cloud metadata) IPs, and
