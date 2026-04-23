@@ -1,13 +1,20 @@
-"""Scheduled jobs — collection, report generation, maintenance."""
+"""Scheduled jobs — collection, report generation, maintenance.
+
+Each job is wrapped in `with_leader_lock` so only one `sia-api` replica runs
+the work when the Deployment is scaled out (ARCHITECTURE_REVIEW §B-2 / §E.2).
+"""
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime
 
+from sia.scheduler.distributed_lock import with_leader_lock
+
 logger = logging.getLogger(__name__)
 
 
+@with_leader_lock("collect_all", ttl_sec=3600)
 async def job_collect_all() -> None:
     """Scheduled job: collect from all active sources."""
     from sia.collector.service import collect_all_sources
@@ -20,6 +27,7 @@ async def job_collect_all() -> None:
         logger.exception("Scheduled collection failed")
 
 
+@with_leader_lock("daily_report", ttl_sec=1800)
 async def job_daily_report() -> None:
     """Scheduled job: generate daily report."""
     from sia.reporter.service import gather_report_data, save_and_distribute
@@ -47,6 +55,7 @@ async def job_daily_report() -> None:
         logger.exception("Daily report generation failed")
 
 
+@with_leader_lock("weekly_report", ttl_sec=1800)
 async def job_weekly_report() -> None:
     """Scheduled job: generate weekly report."""
     from sia.reporter.service import gather_report_data, save_and_distribute
@@ -68,6 +77,7 @@ async def job_weekly_report() -> None:
         logger.exception("Weekly report generation failed")
 
 
+@with_leader_lock("cleanup_old_data", ttl_sec=3600)
 async def job_cleanup_old_data() -> None:
     """Scheduled job: archive old data, clean up DLQ."""
     from sqlalchemy import update
