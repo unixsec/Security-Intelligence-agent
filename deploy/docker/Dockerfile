@@ -4,7 +4,7 @@
 # ==============================================================================
 
 # ---------- Stage 1: Python dependency builder ----------
-FROM python:3.12-slim AS py-builder
+FROM python:3.14-slim AS py-builder
 
 WORKDIR /build
 
@@ -17,7 +17,7 @@ COPY pyproject.toml .
 RUN pip install --no-cache-dir --prefix=/install .
 
 # ---------- Stage 2: Runtime ----------
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 LABEL maintainer="alex <unix_sec@163.com>" \
       org.opencontainers.image.title="sia-backend" \
