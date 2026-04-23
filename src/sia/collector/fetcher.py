@@ -10,7 +10,19 @@ from typing import Any
 
 import httpx
 
+from sia.collector.url_validator import UnsafeURLError, validate_source_url
+
 logger = logging.getLogger(__name__)
+
+# Cap response size in bytes — RSS/JSON feeds should be a few MB at most.
+# Oversize responses are a cheap DoS vector (GB-sized XML bomb).
+_MAX_RESPONSE_BYTES = 20 * 1024 * 1024  # 20 MiB
+
+# Allow-list of response Content-Types we parse. Anything else (e.g. HTML or
+# octet-stream) is treated as a misconfigured / hijacked source.
+_ALLOWED_RSS_CT_PREFIXES = ("application/rss", "application/atom", "application/xml",
+                            "text/xml", "text/html")   # many feeds still serve text/html
+_ALLOWED_API_CT_PREFIXES = ("application/json",)
 
 
 class RawIntelItem:
@@ -61,12 +73,64 @@ class BaseFetcher(ABC):
 
     async def _get_http_client(self) -> httpx.AsyncClient:
         proxy = self.config.get("proxy")
+        # SSRF defence: do NOT follow redirects automatically — each hop must
+        # be re-validated by _safe_get() below.
         return httpx.AsyncClient(
             timeout=self.timeout,
             proxy=proxy,
-            follow_redirects=True,
+            follow_redirects=False,
+            limits=httpx.Limits(max_connections=5, max_keepalive_connections=2),
             headers={"User-Agent": "SIA-Collector/1.0"},
         )
+
+    async def _safe_get(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        headers: dict | None = None,
+        allowed_ct_prefixes: tuple[str, ...] | None = None,
+        max_redirects: int = 3,
+    ) -> httpx.Response:
+        """GET with SSRF validation, redirect re-validation, size cap, Content-Type check.
+
+        Raises UnsafeURLError on unsafe target; HTTPError on HTTP failure;
+        ValueError on size/content-type violation.
+        """
+        allowed_hosts = self.config.get("allowed_hosts")
+        allowed_hosts_set = set(allowed_hosts) if allowed_hosts else None
+
+        current_url = url
+        for _ in range(max_redirects + 1):
+            validate_source_url(current_url, allowed_hosts=allowed_hosts_set)
+            resp = await client.get(current_url, headers=headers or {})
+            if resp.is_redirect:
+                next_url = resp.headers.get("location")
+                if not next_url:
+                    break
+                # resolve relative redirects against current URL
+                current_url = str(httpx.URL(current_url).join(next_url))
+                continue
+            # reached a non-redirect response
+            resp.raise_for_status()
+            # size cap (prefer Content-Length header; fall back to read())
+            cl = resp.headers.get("content-length")
+            if cl and int(cl) > _MAX_RESPONSE_BYTES:
+                raise ValueError(f"response too large: {cl} bytes (> {_MAX_RESPONSE_BYTES})")
+            if len(resp.content) > _MAX_RESPONSE_BYTES:
+                raise ValueError(
+                    f"response too large: {len(resp.content)} bytes (> {_MAX_RESPONSE_BYTES})"
+                )
+            # content-type whitelist
+            if allowed_ct_prefixes is not None:
+                ct = resp.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                if not any(ct.startswith(p) for p in allowed_ct_prefixes):
+                    raise ValueError(
+                        f"unexpected Content-Type {ct!r} from {current_url!r}; "
+                        f"expected one of {allowed_ct_prefixes}"
+                    )
+            return resp
+        raise UnsafeURLError(f"too many redirects (> {max_redirects}) starting from {url!r}")
 
 
 class RSSFetcher(BaseFetcher):
@@ -80,8 +144,9 @@ class RSSFetcher(BaseFetcher):
 
         try:
             async with await self._get_http_client() as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
+                resp = await self._safe_get(
+                    client, url, allowed_ct_prefixes=_ALLOWED_RSS_CT_PREFIXES
+                )
                 raw_text = resp.text
 
             feed = feedparser.parse(raw_text)
@@ -128,8 +193,10 @@ class APIFetcher(BaseFetcher):
 
         try:
             async with await self._get_http_client() as client:
-                resp = await client.get(url, headers=headers)
-                resp.raise_for_status()
+                resp = await self._safe_get(
+                    client, url, headers=headers,
+                    allowed_ct_prefixes=_ALLOWED_API_CT_PREFIXES,
+                )
                 data = resp.json()
 
             # Parse based on source type
