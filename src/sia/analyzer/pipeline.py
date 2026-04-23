@@ -208,6 +208,15 @@ async def run_analysis_consumer() -> None:
 
     stop_event = asyncio.Event()
 
+    # Start outbox publisher as a sibling task. It drains pending outbox rows
+    # into Redis Streams so business writes that used `enqueue_outbox` are
+    # atomically committed AND reliably delivered (ARCHITECTURE_REVIEW §B-5).
+    from sia.common.outbox import run_outbox_publisher
+    outbox_task = asyncio.create_task(
+        run_outbox_publisher(stop_event=stop_event),
+        name="outbox_publisher",
+    )
+
     def _request_stop(signum: int, _frame) -> None:
         logger.info("Consumer received signal %d — draining current batch", signum)
         stop_event.set()
@@ -296,5 +305,12 @@ async def run_analysis_consumer() -> None:
         except Exception:
             logger.exception("Analysis consumer error")
             await asyncio.sleep(5)
+
+    # Drain the outbox publisher too before exiting.
+    try:
+        await asyncio.wait_for(outbox_task, timeout=10)
+    except asyncio.TimeoutError:
+        logger.warning("outbox publisher did not stop in 10s; cancelling")
+        outbox_task.cancel()
 
     logger.info("Analysis consumer exited cleanly")
