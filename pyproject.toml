@@ -8,7 +8,8 @@ version = "0.2.0"
 description = "Security Intelligence Agent - 安全洞察与情报分析智能体"
 authors = [{name = "alex", email = "unix_sec@163.com"}]
 requires-python = ">=3.11"
-license = {text = "Proprietary"}
+license = {text = "Apache-2.0"}
+license-files = ["LICENSE"]
 
 dependencies = [
     # Web framework

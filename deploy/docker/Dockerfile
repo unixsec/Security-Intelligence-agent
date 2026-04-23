@@ -22,7 +22,9 @@ FROM python:3.12-slim AS runtime
 LABEL maintainer="alex <unix_sec@163.com>" \
       org.opencontainers.image.title="sia-backend" \
       org.opencontainers.image.description="Security Intelligence Agent — API & Consumer" \
-      org.opencontainers.image.version="0.2.0"
+      org.opencontainers.image.version="0.2.0" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.source="https://github.com/unixsec/Security-Intelligence-agent"
 
 # Runtime system libs (WeasyPrint, etc.)
 # Explicit UID/GID 1000 matches K8s runAsUser. /home/sia is needed at runtime

@@ -12,3 +12,7 @@ keywords:
 maintainers:
   - name: alex
     email: unix_sec@163.com
+annotations:
+  licenses: Apache-2.0
+sources:
+  - https://github.com/unixsec/Security-Intelligence-agent
