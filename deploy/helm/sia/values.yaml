@@ -206,3 +206,30 @@ jobs:
     enabled: true
   seed:
     enabled: true
+
+# =============================================================================
+# Recurring CronJobs — backup, audit verification, reconciliation
+# =============================================================================
+backup:
+  enabled: true
+  # UTC cron — "15 2 * * *" = 02:15 UTC (10:15 CST, off-peak)
+  schedule: "15 2 * * *"
+  timeZone: "UTC"
+  # Bind-mount a PVC for backups. If left blank, an emptyDir is used and
+  # backups disappear with the pod — only safe for pre-prod validation.
+  persistentVolumeClaim: ""
+
+audit:
+  verifyChain:
+    enabled: true
+    # 03:00 UTC daily. Exits non-zero on any broken chain link; K8s surfaces
+    # failed CronJob via kube-state-metrics.
+    schedule: "0 3 * * *"
+    timeZone: "UTC"
+
+reconcile:
+  enabled: true
+  # Every 15 minutes. Re-queues orphaned 'analyzing' intelligence rows.
+  schedule: "*/15 * * * *"
+  timeZone: "UTC"
+  olderThan: "15m"

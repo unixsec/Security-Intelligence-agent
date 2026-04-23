@@ -1,0 +1,63 @@
+{{- if .Values.reconcile.enabled }}
+# Periodically re-queue orphaned 'analyzing' intelligence rows.
+# Runs every N minutes; very lightweight (one SQL query, one XADD per row).
+# See scripts/ops/reconcile_analyzing.py.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: sia-reconcile-analyzing
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sia.labels" . | nindent 4 }}
+    app.kubernetes.io/component: reconcile
+spec:
+  schedule: {{ .Values.reconcile.schedule | quote }}
+  timeZone: {{ .Values.reconcile.timeZone | default "UTC" | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 7
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: sia
+            app.kubernetes.io/component: reconcile
+        spec:
+          {{- include "sia.imagePullSecrets" . | nindent 10 }}
+          restartPolicy: OnFailure
+          securityContext:
+            {{- include "sia.podSecurityContext" . | nindent 12 }}
+          volumes:
+            {{- include "sia.writableVolumes" . | nindent 12 }}
+            {{- include "sia.secretsVolume" . | nindent 12 }}
+            {{- include "sia.tlsVolumes" . | nindent 12 }}
+          containers:
+            - name: reconcile
+              image: {{ include "sia.image" (dict "global" .Values.global "image" .Values.api.image "chartVersion" .Chart.AppVersion) }}
+              securityContext:
+                {{- include "sia.containerSecurityContext" . | nindent 16 }}
+              command:
+                - python
+                - scripts/ops/reconcile_analyzing.py
+                - --older-than
+                - {{ .Values.reconcile.olderThan | default "15m" | quote }}
+              envFrom:
+                - configMapRef:
+                    name: sia-config
+              env:
+                {{- include "sia.backendEnv" . | nindent 16 }}
+              volumeMounts:
+                {{- include "sia.writableVolumeMounts" . | nindent 16 }}
+                {{- include "sia.secretsVolumeMount" . | nindent 16 }}
+                {{- include "sia.tlsVolumeMounts" . | nindent 16 }}
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+{{- end }}

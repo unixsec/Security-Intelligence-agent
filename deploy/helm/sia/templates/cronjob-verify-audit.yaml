@@ -1,0 +1,59 @@
+{{- if .Values.audit.verifyChain.enabled }}
+# Daily audit-log hash-chain verification.
+# Exits non-zero on any broken link → K8s Job failure → alert via
+# kube-state-metrics / Falco. See scripts/ops/verify_audit_chain.py.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: sia-audit-verify
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sia.labels" . | nindent 4 }}
+    app.kubernetes.io/component: audit-verify
+spec:
+  schedule: {{ .Values.audit.verifyChain.schedule | quote }}
+  timeZone: {{ .Values.audit.verifyChain.timeZone | default "UTC" | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 30
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: sia
+            app.kubernetes.io/component: audit-verify
+        spec:
+          {{- include "sia.imagePullSecrets" . | nindent 10 }}
+          restartPolicy: Never
+          securityContext:
+            {{- include "sia.podSecurityContext" . | nindent 12 }}
+          volumes:
+            {{- include "sia.writableVolumes" . | nindent 12 }}
+            {{- include "sia.secretsVolume" . | nindent 12 }}
+            {{- include "sia.tlsVolumes" . | nindent 12 }}
+          containers:
+            - name: verify
+              image: {{ include "sia.image" (dict "global" .Values.global "image" .Values.api.image "chartVersion" .Chart.AppVersion) }}
+              securityContext:
+                {{- include "sia.containerSecurityContext" . | nindent 16 }}
+              command: ["python", "scripts/ops/verify_audit_chain.py"]
+              envFrom:
+                - configMapRef:
+                    name: sia-config
+              env:
+                {{- include "sia.backendEnv" . | nindent 16 }}
+              volumeMounts:
+                {{- include "sia.writableVolumeMounts" . | nindent 16 }}
+                {{- include "sia.secretsVolumeMount" . | nindent 16 }}
+                {{- include "sia.tlsVolumeMounts" . | nindent 16 }}
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+{{- end }}

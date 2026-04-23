@@ -1,0 +1,69 @@
+{{- if .Values.backup.enabled }}
+# Daily MySQL full backup — compressed dump + SHA-256 checksum.
+# Writes to a PVC (configurable) so ops can later sync to long-term storage.
+# See scripts/ops/backup_mysql.sh and docs/RUNBOOKS/DR.md.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: sia-backup-mysql
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sia.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  timeZone: {{ .Values.backup.timeZone | default "UTC" | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 14
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 3600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: sia
+            app.kubernetes.io/component: backup
+        spec:
+          {{- include "sia.imagePullSecrets" . | nindent 10 }}
+          restartPolicy: OnFailure
+          securityContext:
+            {{- include "sia.podSecurityContext" . | nindent 12 }}
+          volumes:
+            {{- include "sia.writableVolumes" . | nindent 12 }}
+            {{- include "sia.secretsVolume" . | nindent 12 }}
+            {{- include "sia.tlsVolumes" . | nindent 12 }}
+            - name: backups
+              {{- if .Values.backup.persistentVolumeClaim }}
+              persistentVolumeClaim:
+                claimName: {{ .Values.backup.persistentVolumeClaim }}
+              {{- else }}
+              emptyDir:
+                sizeLimit: 10Gi
+              {{- end }}
+          containers:
+            - name: backup
+              image: {{ include "sia.image" (dict "global" .Values.global "image" .Values.api.image "chartVersion" .Chart.AppVersion) }}
+              securityContext:
+                {{- include "sia.containerSecurityContext" . | nindent 16 }}
+              command: ["bash", "scripts/ops/backup_mysql.sh", "/backups"]
+              envFrom:
+                - configMapRef:
+                    name: sia-config
+              env:
+                {{- include "sia.backendEnv" . | nindent 16 }}
+              volumeMounts:
+                {{- include "sia.writableVolumeMounts" . | nindent 16 }}
+                {{- include "sia.secretsVolumeMount" . | nindent 16 }}
+                {{- include "sia.tlsVolumeMounts" . | nindent 16 }}
+                - name: backups
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 1000m
+                  memory: 1Gi
+{{- end }}
