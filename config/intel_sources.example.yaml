@@ -1,0 +1,177 @@
+# =============================================================================
+# Global Intelligence Source Catalog (sample; copy to intel_sources.yaml + tune).
+#
+# Each entry becomes a row in the `source` table on first load (see
+# scripts/ops/seed_sources.py). The `kind` maps to a registered
+# sia.adapters.collector plugin.
+#
+# Geographic coverage:
+#   USA:   NVD, CISA KEV, FBI IC3 (via RSS), bleepingcomputer
+#   EU:    CERT-EU, ENISA advisories
+#   UK:    NCSC advisories
+#   JP:    JPCERT/CC
+#   CN:    CNCERT/CC, CNNVD (via RSS), ThreatBook (commercial)
+#   AU:    ASD Cyber.gov.au advisories
+#   Intl:  MITRE CVE, MISP communities, AlienVault OTX, GitHub Advisories,
+#          VirusTotal, Shodan monitors, Exploit-DB, TAXII (cisa.gov feeds)
+# =============================================================================
+
+sources:
+  # ─── National CERTs ──────────────────────────────────────────────────
+
+  - kind: rest_api
+    name: "NIST NVD"
+    url: "https://services.nvd.nist.gov/rest/json/cves/2.0?resultsPerPage=200"
+    parser: nvd_cve
+    timeout_seconds: 60
+
+  - kind: rest_api
+    name: "CISA KEV Catalog"
+    url: "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    parser: cisa_kev
+
+  - kind: taxii
+    name: "CISA TAXII — Indicators"
+    url: "https://www.cisa.gov/taxii2/api2/collections/<COLLECTION_ID>/objects/"
+    # CISA AIS typically requires an API key / MOU — replace URL with the
+    # collection you're authorized to access.
+    stix_types: [indicator, vulnerability, report]
+
+  - kind: cert_eu
+    name: "CERT-EU Publications"
+    url: "https://cert.europa.eu/publications/threat-intelligence/rss"
+
+  - kind: jpcert
+    name: "JPCERT/CC Alerts (EN)"
+    url: "https://www.jpcert.or.jp/english/rss/jpcert-en.rdf"
+
+  - kind: cncert
+    name: "CNCERT/CC 公告"
+    url: "https://www.cert.org.cn/publish/english/rss/index.xml"
+    language: zh
+
+  - kind: rss
+    name: "UK NCSC Advisories"
+    url: "https://www.ncsc.gov.uk/api/1/services/v1/all-rss-feed.xml"
+
+  - kind: rss
+    name: "Australia ACSC Alerts"
+    url: "https://www.cyber.gov.au/rss/alerts"
+
+  # ─── Open-source / Community ─────────────────────────────────────────
+
+  - kind: github_advisory
+    name: "GitHub Security Advisories"
+    api_key: "${SIA_GITHUB_PAT}"      # needs security_events scope
+    severities: [CRITICAL, HIGH]
+    ecosystems: [pip, npm, maven, go, cargo, nuget, rubygems, composer]
+
+  - kind: otx
+    name: "AlienVault OTX"
+    api_key: "${SIA_OTX_API_KEY}"
+    lookback_hours: 24
+
+  - kind: misp
+    name: "CIRCL MISP"
+    url: "https://misppriv.circl.lu/"
+    api_key: "${SIA_MISP_CIRCL_KEY}"
+    lookback_days: 3
+    tags: ["tlp:white", "tlp:clear"]
+
+  - kind: exploit_db
+    name: "Exploit-DB"
+    url: "https://www.exploit-db.com/rss.xml"
+
+  # ─── Threat news / blogs ─────────────────────────────────────────────
+
+  - kind: bleeping
+    name: "BleepingComputer"
+    url: "https://www.bleepingcomputer.com/feed/"
+
+  - kind: hackernews
+    name: "The Hacker News"
+    url: "https://feeds.feedburner.com/TheHackersNews"
+
+  - kind: rss
+    name: "Krebs on Security"
+    url: "https://krebsonsecurity.com/feed/"
+
+  - kind: rss
+    name: "Microsoft Security Response"
+    url: "https://msrc.microsoft.com/blog/feed"
+
+  - kind: rss
+    name: "Google Project Zero"
+    url: "https://googleprojectzero.blogspot.com/feeds/posts/default"
+
+  - kind: rss
+    name: "Talos Intelligence (Cisco)"
+    url: "https://blog.talosintelligence.com/rss/"
+
+  - kind: rss
+    name: "Mandiant Threat Intel"
+    url: "https://www.mandiant.com/resources/blog/rss.xml"
+
+  - kind: rss
+    name: "CrowdStrike Blog"
+    url: "https://www.crowdstrike.com/blog/feed/"
+
+  - kind: rss
+    name: "Palo Alto Unit 42"
+    url: "https://unit42.paloaltonetworks.com/feed/"
+
+  - kind: rss
+    name: "SentinelOne Labs"
+    url: "https://www.sentinelone.com/labs/feed/"
+
+  - kind: rss
+    name: "Rapid7 Blog"
+    url: "https://www.rapid7.com/blog/rss/"
+
+  # ─── Commercial (require paid API keys) ──────────────────────────────
+
+  - kind: virustotal
+    name: "VirusTotal Intelligence"
+    api_key: "${SIA_VT_API_KEY}"
+    query: "p:5+ fs:24h+ type:peexe"
+
+  - kind: shodan
+    name: "Shodan Corporate Monitor"
+    api_key: "${SIA_SHODAN_KEY}"
+    alert_id: "${SIA_SHODAN_ALERT_ID}"    # OR use `query:`
+
+  # ─── Asia-Pacific (additional) ───────────────────────────────────────
+
+  - kind: rss
+    name: "South Korea KISA (KrCERT)"
+    url: "https://www.krcert.or.kr/rss/krcert-rss.xml"
+
+  - kind: rss
+    name: "India CERT-In"
+    url: "https://www.cert-in.org.in/RSS/latestnews.xml"
+
+  - kind: rss
+    name: "Singapore SingCERT"
+    url: "https://www.csa.gov.sg/alerts-advisories/rss"
+
+  # ─── Latin America ───────────────────────────────────────────────────
+
+  - kind: rss
+    name: "Brazil CERT.br"
+    url: "https://cert.br/rss/alertas"
+
+  # ─── Middle East / Africa ────────────────────────────────────────────
+
+  - kind: rss
+    name: "UAE aeCERT"
+    url: "https://www.tdra.gov.ae/en/aecert/feed"
+
+  # ─── Industry-specific (automotive — matches company profile) ────────
+
+  - kind: rss
+    name: "Auto-ISAC"
+    url: "https://automotiveisac.com/feed"
+
+  - kind: rss
+    name: "UNECE WP.29 updates"
+    url: "https://unece.org/feeds/rss/trans-vehicle-regulations-forums.xml"
