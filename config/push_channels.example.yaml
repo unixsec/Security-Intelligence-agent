@@ -1,0 +1,43 @@
+# =============================================================================
+# Push Channel Runtime Config (copy to push_channels.yaml; gitignored).
+#
+# Each top-level key is a `kind` registered in sia.adapters.push.push_registry.
+# Values are the per-channel adapter config. Secrets use the `secret:<NAME>`
+# token — looked up at runtime from /etc/sia/secrets/<NAME> or env vars.
+# =============================================================================
+channels:
+  email:
+    host: smtp.company.com
+    port: 587
+    use_starttls: true
+    username: "secret:SIA_SMTP_USER"
+    password: "secret:SIA_SMTP_PASSWORD"
+    from_addr: "sia-alerts@company.com"
+    timeout_sec: 30
+
+  wechat_work:
+    webhook: "secret:SIA_WECHAT_WORK_WEBHOOK"
+
+  wechat:
+    app_id:     "secret:SIA_WECHAT_APPID"
+    app_secret: "secret:SIA_WECHAT_APPSECRET"
+    template_id: "YOUR_TEMPLATE_ID"
+
+  feishu:
+    webhook: "secret:SIA_FEISHU_WEBHOOK"
+    signing_secret: "secret:SIA_FEISHU_SIGN"
+
+  dingtalk:
+    webhook: "secret:SIA_DINGTALK_WEBHOOK"
+    secret: "secret:SIA_DINGTALK_SECRET"
+
+  telegram:
+    bot_token: "secret:SIA_TELEGRAM_BOT_TOKEN"
+    parse_mode: MarkdownV2
+
+  sms:
+    provider: aliyun
+    access_key_id:     "secret:SIA_ALIYUN_AK"
+    access_key_secret: "secret:SIA_ALIYUN_SK"
+    sign_name: "SIA 安全简报"
+    template_code: "SMS_0000000"
