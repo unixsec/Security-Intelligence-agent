@@ -1,0 +1,213 @@
+{# Executive Brief — layered, headline-first, print-ready. #}
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>SIA {{ brief.report_type|capitalize }} Executive Brief</title>
+<style>
+  @page { size: A4; margin: 18mm; }
+  :root {
+    --accent: #0d47a1; --danger: #c62828; --warn: #ef6c00;
+    --ok: #2e7d32; --fg: #1a1a1a; --muted: #666; --bg: #f7f9fc;
+  }
+  body { font-family: 'PingFang SC', 'Microsoft YaHei', Segoe UI, sans-serif;
+         color: var(--fg); line-height: 1.55; margin: 0; padding: 0;
+         -webkit-print-color-adjust: exact; }
+  h1, h2, h3 { color: var(--accent); margin-top: 0; }
+  h1 { font-size: 22pt; margin: 0 0 4pt 0; }
+  .sub { color: var(--muted); margin-bottom: 18pt; }
+  .section { margin: 20pt 0; page-break-inside: avoid; }
+  .tldr { background: var(--bg); border-left: 5px solid var(--accent);
+          padding: 12pt 16pt; border-radius: 4pt; }
+  .tldr ul { padding-left: 18pt; margin: 8pt 0 0 0; }
+  .tldr li { margin: 4pt 0; font-weight: 500; }
+
+  /* Radar row of stat chips */
+  .radar { display: flex; flex-wrap: wrap; gap: 8pt; margin: 10pt 0; }
+  .chip { flex: 1 1 auto; min-width: 110pt; padding: 10pt 12pt;
+          border: 1px solid #dde; border-radius: 6pt; background: #fff; }
+  .chip .num { font-size: 22pt; font-weight: 700; color: var(--accent); }
+  .chip.p0 .num { color: var(--danger); }
+  .chip.p1 .num { color: var(--warn); }
+  .chip.kev .num { color: var(--danger); }
+  .chip .label { color: var(--muted); font-size: 9pt; }
+  .delta.up { color: var(--danger); font-weight: 600; }
+  .delta.down { color: var(--ok); font-weight: 600; }
+
+  /* Spotlights */
+  .spotlight { border: 1px solid #dde; border-left: 4px solid var(--accent);
+               padding: 10pt 14pt; margin: 8pt 0; border-radius: 4pt;
+               background: #fff; }
+  .spotlight.P0 { border-left-color: var(--danger); }
+  .spotlight.P1 { border-left-color: var(--warn); }
+  .spotlight h3 { margin: 0 0 4pt 0; font-size: 12pt; }
+  .spotlight .meta { color: var(--muted); font-size: 9pt; margin-bottom: 4pt; }
+  .spotlight .so-what { margin: 6pt 0; }
+  .spotlight .action { background: #fffbe6; padding: 6pt 10pt;
+                       border-radius: 4pt; font-size: 10pt; }
+
+  /* Recommendations */
+  table.recs { border-collapse: collapse; width: 100%; margin-top: 8pt;
+               font-size: 10pt; }
+  table.recs th, table.recs td { border: 1px solid #dde; padding: 6pt 8pt;
+                                  text-align: left; vertical-align: top; }
+  table.recs th { background: var(--bg); }
+  .prio-urgent { color: var(--danger); font-weight: 700; }
+  .prio-this_week { color: var(--warn); font-weight: 600; }
+  .prio-next_sprint { color: var(--muted); }
+
+  /* Appendix */
+  table.items { border-collapse: collapse; width: 100%; font-size: 9pt;
+                margin-top: 6pt; }
+  table.items th, table.items td { border-bottom: 1px solid #eee;
+                                    padding: 4pt 6pt; }
+  table.items th { background: var(--bg); text-align: left; }
+  .pri { display: inline-block; padding: 1pt 6pt; border-radius: 3pt;
+         color: #fff; font-size: 8pt; font-weight: 700; }
+  .pri.P0 { background: var(--danger); }
+  .pri.P1 { background: var(--warn); }
+  .pri.P2 { background: #555; }
+  .pri.P3 { background: #999; }
+
+  .tlp { position: fixed; top: 6mm; right: 6mm;
+         padding: 3pt 8pt; border-radius: 3pt; font-size: 9pt; font-weight: 700;
+         color: #fff; }
+  .tlp-AMBER { background: #d97700; }
+  .tlp-RED { background: var(--danger); }
+  .tlp-GREEN { background: var(--ok); }
+  .tlp-CLEAR { background: #455; }
+  .footer { color: var(--muted); font-size: 8pt; margin-top: 30pt;
+            border-top: 1px solid #eee; padding-top: 6pt; }
+</style>
+</head>
+<body>
+<div class="tlp tlp-{{ brief.tlp }}">TLP:{{ brief.tlp }}</div>
+
+<h1>{{ brief.company_name }} — {{ brief.report_type|capitalize }} Security Briefing</h1>
+<div class="sub">
+  Window: {{ brief.radar.window_start.strftime('%Y-%m-%d %H:%M') }} →
+  {{ brief.radar.window_end.strftime('%Y-%m-%d %H:%M') }}
+  · Generated at {{ brief.generated_at.strftime('%Y-%m-%d %H:%M') }}
+  · Report #{{ brief.report_id }}
+</div>
+
+{# ───────── Layer 1: TL;DR ───────── #}
+<div class="section">
+  <h2>① 执行摘要 (30 秒)</h2>
+  <div class="tldr">
+    <ul>
+      {% for line in brief.tldr_bullets %}<li>{{ line }}</li>{% endfor %}
+    </ul>
+  </div>
+</div>
+
+{# ───────── Layer 2: Threat Radar ───────── #}
+<div class="section">
+  <h2>② 威胁态势雷达</h2>
+  <div class="radar">
+    <div class="chip"><div class="num">{{ brief.radar.total_collected }}</div>
+         <div class="label">情报总数
+           <span class="delta {% if brief.radar.total_delta_pct > 0 %}up{% elif brief.radar.total_delta_pct < 0 %}down{% endif %}">
+             {{ '%+.0f%%' % brief.radar.total_delta_pct }} vs 14d
+           </span>
+         </div></div>
+    <div class="chip p0"><div class="num">{{ brief.radar.p0_count }}</div>
+         <div class="label">P0 (关键)</div></div>
+    <div class="chip p1"><div class="num">{{ brief.radar.p1_count }}</div>
+         <div class="label">P1 (高)</div></div>
+    <div class="chip kev"><div class="num">{{ brief.radar.kev_count }}</div>
+         <div class="label">CISA KEV 已知被利用</div></div>
+    <div class="chip"><div class="num">{{ brief.radar.zero_day_count }}</div>
+         <div class="label">0-day / 疑似</div></div>
+  </div>
+
+  {% if brief.radar.top_categories %}
+  <p><strong>热点分类：</strong>
+    {% for cat, n in brief.radar.top_categories %}
+      <span style="display:inline-block; margin:2pt 6pt 2pt 0; padding:2pt 8pt; background:var(--bg); border-radius:3pt;">
+        {{ cat }} · {{ n }}
+      </span>
+    {% endfor %}
+  </p>
+  {% endif %}
+  {% if brief.radar.top_affected_vendors %}
+  <p><strong>受影响厂商 Top 5：</strong>
+    {% for v, n in brief.radar.top_affected_vendors %}
+      {{ v }} ({{ n }}){% if not loop.last %} · {% endif %}
+    {% endfor %}
+  </p>
+  {% endif %}
+</div>
+
+{# ───────── Layer 3: Spotlights ───────── #}
+{% if brief.spotlights %}
+<div class="section">
+  <h2>③ Top {{ brief.spotlights|length }} 情报聚焦</h2>
+  {% for s in brief.spotlights %}
+  <div class="spotlight {{ s.priority }}">
+    <div class="meta">
+      <span class="pri {{ s.priority }}">{{ s.priority }}</span>
+      · {{ s.category }} · {{ s.source }}
+      {% if s.cve_id %} · <strong>{{ s.cve_id }}</strong>{% endif %}
+      {% if s.cvss_score %} · CVSS {{ s.cvss_score }}{% endif %}
+    </div>
+    <h3>{{ s.title }}</h3>
+    <div class="so-what">🔎 <strong>关键含义：</strong>{{ s.so_what }}</div>
+    <div class="action">✅ <strong>建议动作：</strong>{{ s.recommended_action }}</div>
+    {% if s.url %}
+    <div style="font-size:9pt; margin-top:4pt;">
+      🔗 <a href="{{ s.url }}">{{ s.url }}</a>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{# ───────── Layer 4: Recommendations ───────── #}
+{% if brief.recommendations %}
+<div class="section">
+  <h2>④ 战略建议</h2>
+  <table class="recs">
+    <tr><th style="width:12%">优先级</th><th style="width:18%">责任方</th><th>行动</th></tr>
+    {% for r in brief.recommendations %}
+    <tr>
+      <td class="prio-{{ r.priority }}">
+        {% if r.priority == 'urgent' %}立即 (24h)
+        {% elif r.priority == 'this_week' %}本周
+        {% else %}下个迭代{% endif %}
+      </td>
+      <td>{{ r.owner }}</td>
+      <td>{{ r.text }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% endif %}
+
+{# ───────── Layer 5: Appendix ───────── #}
+<div class="section">
+  <h2>⑤ 附录 — 全部 {{ brief.full_items|length }} 条情报</h2>
+  <table class="items">
+    <tr><th>优先</th><th>分类</th><th>CVE</th><th>CVSS</th>
+        <th>综合分</th><th>来源</th><th>标题</th></tr>
+    {% for it in brief.full_items %}
+    <tr>
+      <td><span class="pri {{ it.priority }}">{{ it.priority }}</span></td>
+      <td>{{ it.category or '-' }}</td>
+      <td>{{ it.cve or '-' }}</td>
+      <td>{{ '%.1f' % it.cvss if it.cvss else '-' }}</td>
+      <td>{{ '%.1f' % it.total_score if it.total_score else '-' }}</td>
+      <td>{{ it.source }}</td>
+      <td><a href="{{ it.url }}">{{ it.title[:120] }}</a></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="footer">
+  Security Intelligence Agent · v0.3 · Classification: TLP:{{ brief.tlp }} ·
+  仅供 {{ brief.company_name }} 内部决策使用；不得向外部共享。
+</div>
+</body>
+</html>
