@@ -4,6 +4,52 @@ All notable changes to SIA. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+### Added — v0.3 Adapter Layer + Global Intel + 7 Push Channels + Layered Exec Brief (v6.0 design)
+- **Adapter layer** (`src/sia/adapters/`): `BaseAdapter` + `Registry` pattern;
+  three surfaces (`collector`, `push`, `llm`) each with registration via
+  `@registry.register("kind")`. New adapter = new file, zero core edit.
+- **14 collector adapters** covering 30+ global intel sources in
+  `config/intel_sources.example.yaml`: NVD / CISA KEV / CERT-EU / JPCERT /
+  CNCERT / NCSC UK / ACSC / KISA / CERT-In / SingCERT / CERT.br / aeCERT /
+  Auto-ISAC / UNECE + OTX / MISP / GitHub Advisories (GraphQL) / VirusTotal /
+  Shodan / Exploit-DB / 10+ vendor blogs; protocols: RSS/Atom, REST/JSON,
+  TAXII 2.x STIX, MISP REST, GraphQL.
+- **7 push adapters** + `dispatcher.py`: email (aiosmtplib) / wechat
+  (公众号 template msg) / wechat_work (robot webhook) / feishu (interactive
+  card + HMAC) / telegram (Bot API + MarkdownV2 escape) / dingtalk
+  (robot + HMAC signature) / sms (aliyun + twilio + tencent stubs).
+  Dispatcher enforces TLP level gating + subscribe-level filter + bounded
+  concurrency. `config/push_channels.example.yaml`.
+- **Layered executive brief** (`sia.reporter.exec_brief`): 5-layer
+  structure (TL;DR → ThreatRadar → Top-3 Spotlights → Recommendations →
+  Appendix); delta vs 14-day baseline; deterministic fallback when LLM
+  analysis fields are missing. Jinja2 + WeasyPrint A4 PDF; render via
+  `exec_render.render_html / render_pdf`.
+- **4 new architecture diagrams** (Mermaid + PNG):
+  `21-application-arch` (7 layers), `22-technology-arch` (tech stack),
+  `23-deployment-arch` (K8s topology with CronJobs + observability),
+  `24-usecase-view` (UML, 30 UC × 6 actors).
+- **Design Principles Audit** (`docs/DESIGN_PRINCIPLES_AUDIT.md`): SOLID,
+  12-Factor, Cloud Native, DDD, OWASP ASVS v4 L2, Zero Trust matrix.
+- **v6.0 design doc** (`design/Security_Intelligence_Agent_Design_v6.0.md`):
+  supersedes v5.0 as authoritative design with new ADRs 013-016.
+
+### Added — Unit tests (new modules ≥ 60% cov target)
+- `tests/unit/test_adapter_base.py` — Registry + BaseAdapter.run error translation
+- `tests/unit/test_push_adapters.py` — wechat_work / feishu / dingtalk / telegram / email + dispatcher TLP
+- `tests/unit/test_collector_adapters.py` — registry coverage, RSS parsing, NVD/KEV/generic parsers, rate-gate
+- `tests/unit/test_exec_brief.py` — TL;DR generation, recommendations, spotlight LLM-fallback
+
+### Changed
+- `sia.reporter.pusher.dispatcher` replaces hard-coded `channels.py`; all
+  outbound IM/SMTP/SMS now goes through the adapter registry.
+- All outbound webhook URLs validated via `url_validator.validate_source_url`
+  to prevent SSRF through mis-configured channels.
+- Telegram MarkdownV2 reserved characters escaped in adapter before send
+  (prevents markdown-injection by hostile payload content).
+- Jinja templates use `select_autoescape(['html', 'xml'])`.
+
+
 ### Added — v0.3.0 enterprise baseline (remaining 5 items from ARCHITECTURE_REVIEW §D)
 - **DB / Redis resilience** (`src/sia/common/resilience.py`): per-dependency
   CircuitBreaker + bounded exponential-backoff retry for MySQL / Redis /
