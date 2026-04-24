@@ -54,3 +54,8 @@ deploy/rendered/
 
 # Claude Code local settings (per-user, never commit)
 .claude/settings.local.json
+
+# Local-only analysis artifacts — never upload to GitHub
+# (design documents & architecture diagrams kept offline for review only)
+design/
+diagrams/
