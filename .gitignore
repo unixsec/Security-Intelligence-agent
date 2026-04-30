@@ -55,10 +55,13 @@ deploy/rendered/
 # Claude Code local settings (per-user, never commit)
 .claude/settings.local.json
 
-# Design directory and architecture diagrams: LOCAL-ONLY by policy.
-# Everything under design/ — public design docs, ADRs, evaluations, plans,
-# pentest reports, chaos reports — stays on the maintainer's workstation
-# and is NEVER pushed to GitHub. Treat it as scratchpad + private review
-# material; do not link to specific files from public docs.
+# Design directory: LOCAL-ONLY by policy.
+# Everything under design/ — design docs, ADRs, evaluations, plans, pentest
+# reports, chaos reports, AND architecture diagrams (design/diagrams/) — stays
+# on the maintainer's workstation and is NEVER pushed to GitHub. Treat it as
+# scratchpad + private review material; do not link to specific files from
+# public docs.
 design/
+# Defense-in-depth: also block any top-level diagrams/ from being created
+# accidentally outside design/.
 diagrams/
