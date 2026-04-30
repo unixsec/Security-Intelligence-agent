@@ -2,16 +2,29 @@
 
 Each job is wrapped in `with_leader_lock` so only one `sia-api` replica runs
 the work when the Deployment is scaled out (ARCHITECTURE_REVIEW §B-2 / §E.2).
+
+FN-1: daily / weekly reports flow through the full executive-briefing
+pipeline (build_brief → render HTML → save_and_distribute) instead of the
+v0.2 placeholder f-string. The deterministic templates inside ``exec_brief``
+already handle the LLM-unavailable case, so this path is safe even when the
+LLM gateway circuit is open.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from datetime import datetime
 
 from sia.scheduler.distributed_lock import with_leader_lock
 
 logger = logging.getLogger(__name__)
+
+
+def _brief_to_jsonable(brief) -> dict:
+    """``asdict()`` keeps datetime objects; convert them to isoformat for JSON."""
+    import json
+    return json.loads(json.dumps(asdict(brief), default=str))
 
 
 @with_leader_lock("collect_all", ttl_sec=3600)
@@ -27,54 +40,68 @@ async def job_collect_all() -> None:
         logger.exception("Scheduled collection failed")
 
 
+async def _run_briefed_report(report_type: str, window_hours: int) -> None:
+    """Shared body for daily / weekly scheduled reports (FN-1).
+
+    Flow:
+      1. ``gather_report_data`` — DB aggregates for top-N + counts.
+      2. Skip silently if zero intel was collected in the window.
+      3. ``build_brief`` — 5-layer ExecBriefData built from MySQL rows; uses
+         deterministic templates when LLM fields are absent so this never
+         depends on LLM gateway availability.
+      4. ``render_html`` — Jinja-rendered HTML (UTF-8 bytes).
+      5. ``save_and_distribute`` — persist Report row, archive HTML to MinIO,
+         publish a push task on ``push_task_stream``.
+    """
+    from sia.reporter.exec_brief import build_brief
+    from sia.reporter.exec_render import render_html
+    from sia.reporter.service import gather_report_data, save_and_distribute
+
+    logger.info("Scheduled %s report generation started", report_type)
+    try:
+        report_data = await gather_report_data(report_type=report_type)
+        if report_data["stats"]["total_collected"] == 0:
+            logger.info("No intel collected for %s window, skipping report", report_type)
+            return
+
+        brief = await build_brief(report_type=report_type, window_hours=window_hours)
+        content = _brief_to_jsonable(brief)
+        try:
+            html_bytes = render_html(brief).encode("utf-8")
+        except Exception:
+            # Template / weasyprint problems should not lose the JSON payload;
+            # downstream still gets the structured brief in DB.
+            logger.exception("HTML render failed for %s report; persisting JSON only", report_type)
+            html_bytes = None
+
+        await save_and_distribute(
+            report_type=report_type,
+            content=content,
+            report_data=report_data,
+            html_bytes=html_bytes,
+        )
+        logger.info(
+            "%s report generated: items=%d P0=%d P1=%d KEV=%d",
+            report_type,
+            brief.radar.total_collected,
+            brief.radar.p0_count,
+            brief.radar.p1_count,
+            brief.radar.kev_count,
+        )
+    except Exception:
+        logger.exception("%s report generation failed", report_type)
+
+
 @with_leader_lock("daily_report", ttl_sec=1800)
 async def job_daily_report() -> None:
     """Scheduled job: generate daily report."""
-    from sia.reporter.service import gather_report_data, save_and_distribute
-
-    logger.info("Scheduled daily report generation started")
-    try:
-        report_data = await gather_report_data(report_type="daily")
-        if report_data["stats"]["total_collected"] == 0:
-            logger.info("No intel collected today, skipping report")
-            return
-
-        # Generate via LLM would happen via workflow; for scheduled job we do a simpler version
-        content = {
-            "executive_summary": f"Daily report: {report_data['stats']['total_collected']} items collected, "
-                                 f"{report_data['stats']['p0_count']} P0, {report_data['stats']['p1_count']} P1",
-            "generated_at": datetime.now().isoformat(),
-        }
-        await save_and_distribute(
-            report_type="daily",
-            content=content,
-            report_data=report_data,
-        )
-        logger.info("Daily report generated successfully")
-    except Exception:
-        logger.exception("Daily report generation failed")
+    await _run_briefed_report("daily", window_hours=24)
 
 
 @with_leader_lock("weekly_report", ttl_sec=1800)
 async def job_weekly_report() -> None:
     """Scheduled job: generate weekly report."""
-    from sia.reporter.service import gather_report_data, save_and_distribute
-
-    logger.info("Scheduled weekly report generation started")
-    try:
-        report_data = await gather_report_data(report_type="weekly")
-        content = {
-            "executive_summary": f"Weekly report: {report_data['stats']['total_collected']} items, "
-                                 f"{report_data['stats']['p0_count']} P0, {report_data['stats']['p1_count']} P1",
-            "generated_at": datetime.now().isoformat(),
-        }
-        await save_and_distribute(
-            report_type="weekly",
-            content=content,
-            report_data=report_data,
-        )
-    except Exception:
-        logger.exception("Weekly report generation failed")
+    await _run_briefed_report("weekly", window_hours=168)
 
 
 @with_leader_lock("cleanup_old_data", ttl_sec=3600)

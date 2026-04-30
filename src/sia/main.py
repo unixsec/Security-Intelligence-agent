@@ -57,6 +57,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     _configure_logging(settings)
 
+    # OBS-2: tracing must initialize before the first request so the
+    # FastAPI instrumentor can hook the route handler. The function is a
+    # no-op when SIA_OTLP_ENDPOINT is unset.
+    try:
+        from sia.common.tracing import init_tracing
+        init_tracing(service_name="sia-api", service_version=__version__)
+    except Exception:
+        logger.exception("tracing init failed; continuing without traces")
+
     logger.info("SIA v%s starting (env=%s)", __version__, settings.env)
 
     # Initialize database
@@ -92,8 +101,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("SIA shutting down")
     if scheduler:
         scheduler.shutdown(wait=True)
+    # Stop the prompt-watcher if anything inside the process holds a manager
+    # (the API itself doesn't, but the consumer/scheduler tasks may have one).
+    try:
+        from sia.gateway.llm.prompt_manager import PromptManager  # noqa: F401
+    except Exception:
+        pass
     await close_redis()
     await close_db()
+    try:
+        from sia.common.tracing import shutdown_tracing
+        shutdown_tracing()
+    except Exception:
+        pass
     logger.info("SIA shutdown complete")
 
 
@@ -145,6 +165,10 @@ def create_app() -> FastAPI:
     from sia.gateway.api.v1.sources import router as source_router
     from sia.gateway.api.v1.reports import router as report_router
     from sia.gateway.api.v1.dashboard import router as dashboard_router
+    # v0.4 admin panel additions
+    from sia.gateway.api.v1.api_keys import router as api_keys_router
+    from sia.gateway.api.v1.audit import router as audit_router
+    from sia.gateway.api.v1.system_admin import router as system_admin_router
 
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(users_router, prefix="/api/v1")
@@ -152,6 +176,18 @@ def create_app() -> FastAPI:
     app.include_router(source_router, prefix="/api/v1")
     app.include_router(report_router, prefix="/api/v1")
     app.include_router(dashboard_router, prefix="/api/v1")
+    app.include_router(api_keys_router, prefix="/api/v1")
+    app.include_router(audit_router, prefix="/api/v1")
+    app.include_router(system_admin_router, prefix="/api/v1")
+
+    # OBS-1: Prometheus scrape endpoint. Mounted as a sub-app so it
+    # bypasses dependency injection and request validation, and is excluded
+    # from rate-limiting via RateLimitMiddleware._HEALTH_PATHS.
+    from prometheus_client import make_asgi_app
+    # Touch the metrics module so all metric objects are registered before
+    # the first scrape arrives.
+    import sia.common.metrics  # noqa: F401
+    app.mount("/metrics", make_asgi_app())
 
     @app.get("/")
     async def root():

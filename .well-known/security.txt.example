@@ -1,0 +1,10 @@
+# RFC 9116 / security.txt — copy to your deployment's web root.
+# Replace placeholders with your organisation's contacts.
+Contact: mailto:security@example.com
+Expires: 2027-01-01T00:00:00Z
+Encryption: https://example.com/.well-known/pgp-key.asc
+Acknowledgments: https://example.com/security/credits
+Preferred-Languages: en, zh
+Canonical: https://example.com/.well-known/security.txt
+Policy: https://example.com/security/policy
+# Hiring: https://example.com/careers/security

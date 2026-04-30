@@ -158,11 +158,19 @@ else
 fi
 
 # =============================================================================
-# Step 4 — Create namespace
+# Step 4 — Create namespace + Pod Security Standards labels (DEP-3)
 # =============================================================================
 info "Step 4/8 — Ensuring namespace $NAMESPACE exists..."
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
-ok "Namespace ready"
+# Enforce the restricted PSS profile so any future drift (someone landing
+# a privileged pod) is rejected at admission time, not in code review.
+kubectl label namespace "$NAMESPACE" \
+  pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/enforce-version=latest \
+  pod-security.kubernetes.io/audit=restricted \
+  pod-security.kubernetes.io/warn=restricted \
+  --overwrite >/dev/null
+ok "Namespace ready (PSS=restricted)"
 
 # =============================================================================
 # Step 5 — Apply secrets manifest (if present)
@@ -175,6 +183,27 @@ else
   warn "No rendered secrets file. Ensure sia-secrets already exists in namespace $NAMESPACE."
   kubectl -n "$NAMESPACE" get secret sia-secrets >/dev/null 2>&1 \
     || err "sia-secrets not found in namespace. Run: ./scripts/deploy/configure.sh --generate-secrets"
+fi
+
+# =============================================================================
+# Step 5b — Apply Gatekeeper constraints (DEP-2)
+# =============================================================================
+# When the cluster has Gatekeeper installed, automatically enforce the
+# constraint templates / constraints checked into deploy/k8s/. We detect
+# Gatekeeper by the presence of its CRDs; absence is not a failure.
+GATEKEEPER_DIR="$PROJECT_ROOT/deploy/k8s/gatekeeper-constraints"
+if [[ -d "$GATEKEEPER_DIR" ]]; then
+  info "Step 5b/8 — Applying Gatekeeper constraints (if available)..."
+  if kubectl api-resources --api-group=templates.gatekeeper.sh 2>/dev/null | grep -q "constrainttemplates"; then
+    if kubectl apply -f "$GATEKEEPER_DIR/" 2>&1 | tee /tmp/sia-gk-apply.log; then
+      ok "Gatekeeper constraints applied"
+    else
+      warn "Gatekeeper apply hit errors — see /tmp/sia-gk-apply.log"
+    fi
+  else
+    warn "Gatekeeper CRDs not detected; skipping constraint apply"
+    warn "  (install gatekeeper operator first to enforce SIA's policies)"
+  fi
 fi
 
 # =============================================================================

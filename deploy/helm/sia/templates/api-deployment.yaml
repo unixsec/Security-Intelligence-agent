@@ -1,3 +1,6 @@
+{{- /* v0.4-5: when Argo Rollouts is on, the Deployment is replaced by a
+   Rollout (see api-rollout.yaml). Skip rendering this template. */ -}}
+{{- if not .Values.rollouts.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -24,6 +27,12 @@ spec:
         app.kubernetes.io/component: api
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        # OBS-1: prometheus-style scrape annotations for clusters using
+        # `prometheus.io/scrape` discovery (kube-state / node-exporter
+        # ServiceMonitor users should set observability.serviceMonitor.enabled).
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8080"
     spec:
       {{- include "sia.imagePullSecrets" . | nindent 6 }}
       securityContext:
@@ -79,3 +88,4 @@ spec:
             initialDelaySeconds: {{ .Values.api.probes.startup.initialDelaySeconds }}
             periodSeconds: {{ .Values.api.probes.startup.periodSeconds }}
             failureThreshold: {{ .Values.api.probes.startup.failureThreshold }}
+{{- end }}

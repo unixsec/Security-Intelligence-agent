@@ -238,10 +238,11 @@ async def oidc_callback(
     provider: str = Query(...),
     code: str = Query(...),
     redirect_uri: str = Query(...),
+    state: str = Query(..., description="The state token returned by /oidc/authorize; required for PKCE."),
     request: Request = None,
     db: AsyncSession = Depends(get_db),
 ):
-    """Exchange OIDC authorization code for SIA tokens."""
+    """Exchange OIDC authorization code for SIA tokens (PKCE-bound)."""
     from sia.auth.providers.oidc import get_oidc_provider
 
     oidc = get_oidc_provider()
@@ -249,7 +250,11 @@ async def oidc_callback(
         raise HTTPException(status_code=400, detail="OIDC is not enabled")
 
     try:
-        info = await oidc.handle_callback(provider, redirect_uri, code)
+        info = await oidc.handle_callback(provider, redirect_uri, code, state=state)
+    except ValueError as e:
+        # Verifier missing/expired or userinfo non-2xx — explicit 4xx.
+        logger.warning("OIDC callback rejected: %s", e)
+        raise HTTPException(status_code=401, detail=str(e))
     except Exception:
         logger.exception("OIDC callback failed for provider=%s", provider)
         raise HTTPException(status_code=401, detail="OIDC authentication failed")
@@ -335,16 +340,35 @@ async def refresh_token(
 
 # ─── Logout ──────────────────────────────────────────────────────────────────
 
+class LogoutRequest(BaseModel):
+    refresh_token: str | None = None
+    access_token: str | None = None
+
+
 @router.post("/logout")
 async def logout(
-    body: RefreshRequest,
+    body: LogoutRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Revoke a refresh token (client should also discard the access token)."""
-    th = token_hash(body.refresh_token)
-    await db.execute(
-        update(RefreshToken).where(RefreshToken.token_hash == th).values(revoked=True)
-    )
+    """Revoke the supplied refresh token (DB) and access token (Redis blacklist).
+
+    SEC-4: an access token has a short TTL but is otherwise stateless. We
+    insert its ``jti`` into the ``jwt:revoked:`` set with TTL == remaining
+    life so every subsequent request is rejected by ``is_token_revoked``.
+    """
+    if body.refresh_token:
+        th = token_hash(body.refresh_token)
+        await db.execute(
+            update(RefreshToken).where(RefreshToken.token_hash == th).values(revoked=True)
+        )
+
+    if body.access_token:
+        from sia.auth.jwt import revoke_token
+        try:
+            await revoke_token(body.access_token)
+        except Exception:
+            logger.exception("Failed to revoke access token via Redis")
+
     return {"status": "logged_out"}
 
 

@@ -1,10 +1,17 @@
 """Rate limiter middleware for API endpoints.
 
+FN-4: previous version held buckets in process memory, so a 4-replica API
+deployment effectively gave each client 4× the configured rate. This
+version evaluates each bucket atomically inside Redis (Lua script), so
+all replicas share one limiter. Best-effort fallback to the in-process
+bucket kicks in only when Redis is unavailable, so a Redis outage never
+brings down the API.
+
 Two rings:
-  1. Global middleware — per-client bucket using the first available identity:
-     JWT subject, API key (SHA-256 digest), or client IP.
-  2. Path-specific stricter limit (SEC-015) — login route: 5 req/min/IP.
-     Applied in-middleware based on path matching.
+  1. Default per-identity bucket — JWT subject digest, API-key digest, or
+     client IP.
+  2. Stricter login-route bucket keyed by IP (SEC-015) — credential
+     stuffing protection.
 """
 
 from __future__ import annotations
@@ -20,8 +27,41 @@ from starlette.responses import Response
 logger = logging.getLogger(__name__)
 
 
-class TokenBucket:
-    """One bucket per identity."""
+# Lua atomic token-bucket evaluation:
+#   KEYS[1] = bucket key
+#   ARGV[1] = capacity (burst)
+#   ARGV[2] = refill rate (tokens / sec)
+#   ARGV[3] = now (ms since epoch)
+# Returns: 1 if a token was consumed, 0 otherwise.
+_LUA_BUCKET = """
+local key = KEYS[1]
+local capacity = tonumber(ARGV[1])
+local rate = tonumber(ARGV[2])
+local now = tonumber(ARGV[3])
+local data = redis.call('HMGET', key, 'tokens', 'last')
+local tokens = tonumber(data[1])
+local last = tonumber(data[2])
+if tokens == nil then
+  tokens = capacity
+  last = now
+end
+local elapsed = (now - last) / 1000.0
+if elapsed > 0 then
+  tokens = math.min(capacity, tokens + elapsed * rate)
+end
+local allowed = 0
+if tokens >= 1 then
+  tokens = tokens - 1
+  allowed = 1
+end
+redis.call('HMSET', key, 'tokens', tokens, 'last', now)
+redis.call('PEXPIRE', key, 60000)
+return allowed
+"""
+
+
+class _LocalBucket:
+    """In-process token bucket, used when Redis is unreachable."""
 
     __slots__ = ("burst", "rate", "buckets")
 
@@ -41,19 +81,52 @@ class TokenBucket:
         return False
 
 
+class RedisBucket:
+    """Cluster-wide token bucket evaluated by the Lua script."""
+
+    def __init__(self, *, name: str, capacity: int, rate_per_sec: float):
+        self.name = name
+        self.capacity = capacity
+        self.rate = rate_per_sec
+        self._sha: str | None = None
+        # Local fallback used on Redis outage.
+        self._local = _LocalBucket(
+            requests_per_minute=int(rate_per_sec * 60),
+            burst=capacity,
+        )
+
+    async def _ensure_loaded(self, redis) -> str:
+        if self._sha is None:
+            self._sha = await redis.script_load(_LUA_BUCKET)
+        return self._sha
+
+    async def consume(self, identity: str) -> bool:
+        try:
+            from sia.common.redis import get_redis
+            redis = get_redis()
+            sha = await self._ensure_loaded(redis)
+            now_ms = int(time.time() * 1000)
+            res = await redis.evalsha(
+                sha, 1,
+                f"sia:rl:{self.name}:{identity}",
+                str(self.capacity), str(self.rate), str(now_ms),
+            )
+            return bool(int(res))
+        except Exception:
+            # Redis outage — degrade to per-replica bucket so we keep limiting,
+            # just less precisely. Logging once a minute would be nice; for
+            # now a debug log keeps the hot path quiet.
+            logger.debug("Redis rate limiter unavailable; using local fallback", exc_info=True)
+            return self._local.consume(identity)
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Per-identity token-bucket limiter.
+    """Per-identity Redis-backed rate limiter (FN-4)."""
 
-    Args:
-        app: ASGI app.
-        requests_per_minute: default bucket RPM for all paths.
-        login_requests_per_minute: separate stricter bucket for auth endpoints
-            (SEC-015). Defaults to 5/min.
-        login_path_prefixes: paths counted as login attempts.
-    """
-
+    # /metrics is mounted as an ASGI sub-app and must not be rate-limited
+    # (Prometheus scrapes at high frequency).
     _HEALTH_PATHS = frozenset(
-        {"/health", "/healthz", "/api/v1/health", "/api/health"}
+        {"/health", "/healthz", "/api/v1/health", "/api/health", "/metrics"}
     )
 
     def __init__(
@@ -70,15 +143,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         burst: int | None = None,
     ):
         super().__init__(app)
-        self._default = TokenBucket(requests_per_minute=requests_per_minute, burst=burst)
-        self._login = TokenBucket(requests_per_minute=login_requests_per_minute, burst=login_requests_per_minute)
+        self._default = RedisBucket(
+            name="default",
+            capacity=burst or requests_per_minute,
+            rate_per_sec=requests_per_minute / 60.0,
+        )
+        self._login = RedisBucket(
+            name="login",
+            capacity=login_requests_per_minute,
+            rate_per_sec=login_requests_per_minute / 60.0,
+        )
         self._login_prefixes = login_path_prefixes
 
     # ─── Identity resolution (SEC-006) ─────────────────────────────────────
     def _identity(self, request: Request) -> str:
-        # 1) Bearer JWT — decode-free, use token's 10-char digest so we don't
-        #    parse on every request. Attackers can rotate tokens, but that's
-        #    protected by the login limiter + DB-backed refresh rotation.
+        # 1) Bearer JWT — decode-free digest (the auth path validates).
         auth = request.headers.get("authorization", "")
         if auth.lower().startswith("bearer "):
             return "jwt:" + hashlib.sha256(auth[7:].encode()).hexdigest()[:16]
@@ -86,7 +165,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         k = request.headers.get("x-api-key")
         if k:
             return "key:" + hashlib.sha256(k.encode()).hexdigest()[:16]
-        # 3) fall back to client IP (with proxy support)
+        # 3) Fall back to client IP (with proxy support)
         fwd = request.headers.get("x-forwarded-for")
         if fwd:
             return "ip:" + fwd.split(",")[0].strip()
@@ -95,8 +174,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        path = request.url.path.rstrip("/")
-        if path in self._HEALTH_PATHS:
+        path = request.url.path.rstrip("/") or "/"
+        # Health and Prometheus scrape paths bypass the limiter entirely.
+        if path in self._HEALTH_PATHS or path.startswith("/metrics"):
             return await call_next(request)
 
         identity = self._identity(request)
@@ -109,13 +189,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             ip = ip.split(",")[0].strip() if ip else (
                 request.client.host if request.client else "unknown"
             )
-            if not self._login.consume("loginip:" + ip):
+            if not await self._login.consume("loginip:" + ip):
                 raise HTTPException(
                     status_code=429,
                     detail="Too many login attempts. Slow down.",
                 )
 
-        if not self._default.consume(identity):
+        if not await self._default.consume(identity):
             raise HTTPException(
                 status_code=429,
                 detail="Rate limit exceeded. Please slow down.",

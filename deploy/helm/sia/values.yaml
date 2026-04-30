@@ -10,8 +10,18 @@
 global:
   imageRegistry: ""           # e.g. "registry.company.com/sia"
   imagePullSecrets: []
+  # v0.4-8: region tag injected as SIA_REGION; combine with
+  # SIA_REGION_IDENTITY_PRIMARY (set per cluster) to enforce
+  # active-active identity write-pinning.
+  region: "default"
+  identityPrimaryRegion: "default"
 
 namespace: sia
+
+# DEP-3: when true, Helm renders the namespace itself with Pod Security
+# Standards labels (restricted profile). Leave false if your operations
+# create the namespace via kubectl/Argo before helm runs (the default).
+namespaceManagedByHelm: false
 
 # =============================================================================
 # Backend API
@@ -88,13 +98,16 @@ web:
 # =============================================================================
 # Ingress
 # =============================================================================
+# DEP-1: TLS is REQUIRED by default. Disabling it (e.g. for a localhost dev
+# install) requires explicit override AND config.env != "production"; see
+# templates/ingress.yaml fail() guard.
 ingress:
   enabled: true
   className: nginx
   annotations: {}             # cert-manager.io/cluster-issuer: letsencrypt-prod
   host: sia.example.com
   tls:
-    enabled: false
+    enabled: true
     secretName: sia-tls
 
 # =============================================================================
@@ -157,9 +170,12 @@ minio:
 # =============================================================================
 # Network policy
 # =============================================================================
+# DEP-1: in production this MUST be an explicit allow-list of upstream
+# CIDRs (LLM providers, threat-feed APIs, your registry mirrors). The
+# template guard refuses ``["0.0.0.0/0"]`` when config.env == "production".
 network:
   egressAllowedCidrs:
-    - "0.0.0.0/0"             # internet egress; tighten in prod
+    - "0.0.0.0/0"             # OK for dev only; tighten before prod (DEP-1)
 
 # =============================================================================
 # Observability
@@ -167,13 +183,29 @@ network:
 observability:
   otlpEndpoint: ""
   logJsonFormat: true
+  # OBS-1: Prometheus Operator ServiceMonitor. Set enabled=true when the
+  # cluster already has the operator installed; otherwise scrape via
+  # prom-annotations on the Pod (see api-deployment.yaml).
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    additionalLabels: {}
+  # v0.4-6: Prometheus SLO rules + multi-window burn-rate alerts.
+  prometheusRule:
+    enabled: false
+    additionalLabels: {}
 
 # =============================================================================
 # Security add-ons (require operator-level components in cluster)
 # =============================================================================
+# DEP-2: Gatekeeper constraints are turned on by default. ``deploy-k8s.sh``
+# detects whether the cluster has the Gatekeeper CRDs installed and skips
+# the apply step gracefully when it doesn't, so this default is safe for
+# clusters that haven't (yet) installed Gatekeeper.
 security:
   falcoRulesEnabled: false
-  gatekeeperConstraintsEnabled: false
+  gatekeeperConstraintsEnabled: true
 
 # =============================================================================
 # Secrets
@@ -197,6 +229,21 @@ secrets:
   googleApiKey: ""
   anthropicApiKey: ""
   openaiApiKey: ""
+
+# =============================================================================
+# Argo Rollouts (canary) — v0.4-5
+# When enabled, the api Deployment is replaced by an argoproj.io/v1alpha1
+# Rollout. Cluster must already have the Argo Rollouts controller installed.
+# =============================================================================
+rollouts:
+  enabled: false
+  pauseSeconds: 60
+  analysis:
+    enabled: false
+    # Prometheus URL the AnalysisRun queries. Typical in-cluster value:
+    prometheusUrl: "http://prometheus.monitoring.svc.cluster.local:9090"
+    # Max acceptable 5xx error rate during a canary step (fraction).
+    maxErrorRate: 0.02
 
 # =============================================================================
 # Post-install jobs

@@ -88,6 +88,10 @@ async def persist_analysis_result(
                 secondary_category=classification.get("secondary_category"),
                 tags=classification.get("tags"),
                 tlp_level=classification.get("tlp_level", "GREEN"),
+                # FN-6: bilingual fields — both must be present in v1.2
+                # classify_intel output. Fall back gracefully if a (legacy)
+                # provider replied without them.
+                title_zh=classification.get("title_zh"),
                 summary=classification.get("summary_en"),
                 summary_zh=classification.get("summary_zh"),
                 score_relevance=dimension_scores["relevance"],
@@ -147,6 +151,63 @@ async def persist_analysis_result(
         # Capture values before session closes (avoid detached instance access)
         intel_title = intel.title
 
+    # OBS-1: publish per-priority/category metric for HPA & SLO purposes.
+    try:
+        from sia.common.metrics import intel_analyzed_total
+        intel_analyzed_total.labels(
+            priority=final_priority,
+            category=classification.get("primary_category", "uncategorized"),
+        ).inc()
+    except Exception:
+        logger.debug("metrics increment failed", exc_info=True)
+
+    # v0.4-1: Milvus indexing + level 2/3 dedup. Best-effort; never blocks
+    # the analyzer. If a same-day or cross-day match is found we log it so
+    # the analyst UI can fold related items (UI rendering is v0.4+).
+    try:
+        from sia.analyzer.dedup import (
+            check_cross_day_dedup,
+            check_vector_similarity,
+            index_intel_vector,
+        )
+        from sia.common.milvus_client import is_enabled as _milvus_on
+
+        if _milvus_on():
+            cat = classification.get("primary_category") or "uncategorized"
+            same_day = await check_vector_similarity(
+                title=intel_title,
+                content="",            # title alone is enough at this point; full content already stored
+                exclude_intel_id=intel_id,
+            )
+            cross_day = await check_cross_day_dedup(
+                title=intel_title,
+                content="",
+                exclude_intel_id=intel_id,
+            ) if not same_day else []
+
+            if same_day:
+                logger.info(
+                    "Level-2 dedup hit: intel_id=%d related_to=%s sim=%.3f",
+                    intel_id, same_day[0]["intel_id"], same_day[0]["similarity"],
+                )
+            elif cross_day:
+                logger.info(
+                    "Level-3 dedup hit: intel_id=%d resurfacing_of=%s sim=%.3f",
+                    intel_id, cross_day[0]["intel_id"], cross_day[0]["similarity"],
+                )
+
+            # Always index the new vector after the related-to lookup so the
+            # next item can match against it.
+            await index_intel_vector(
+                intel_id=intel_id,
+                title=intel_title,
+                content="",
+                category=cat,
+                collected_at=datetime.now(),
+            )
+    except Exception:
+        logger.exception("vector dedup pass failed (non-fatal); continuing")
+
     # Publish to analyzed stream (outside DB session)
     await publish_to_stream(STREAM_ANALYZED, {
         "intel_id": str(intel_id),
@@ -191,6 +252,15 @@ async def run_analysis_consumer() -> None:
     from sia.config import get_llm_config, get_settings
 
     settings = get_settings()
+
+    # OBS-2: consumer process is a separate Python entry point from the
+    # FastAPI app, so it needs its own tracer init. No-op when not configured.
+    try:
+        from sia.common.tracing import init_tracing
+        init_tracing(service_name="sia-consumer")
+    except Exception:
+        logger.exception("consumer tracing init failed; continuing")
+
     llm_config = get_llm_config()
     gateway = LLMGateway(llm_config)
     prompt_mgr = PromptManager(settings.prompts_dir)
@@ -234,6 +304,12 @@ async def run_analysis_consumer() -> None:
 
     logger.info("Analysis consumer started: consumer=%s group=%s", consumer_name, group)
 
+    # FN-5: exponential backoff on outer-loop failure (the inner per-message
+    # try/except already DLQs poison messages, so the outer except only fires
+    # on Redis or unexpected systemic errors).
+    from sia.common.retry import exponential_backoff
+    consec_outer_failures = 0
+
     while not stop_event.is_set():
         try:
             messages = await redis.xreadgroup(
@@ -242,6 +318,7 @@ async def run_analysis_consumer() -> None:
                 count=5,
                 block=5000,
             )
+            consec_outer_failures = 0  # successful read resets backoff
             if not messages:
                 continue
 
@@ -298,13 +375,19 @@ async def run_analysis_consumer() -> None:
                                 "intel_id": data.get("intel_id", ""),
                                 "error": "analysis_failed",
                             })
+                            try:
+                                from sia.common.metrics import intel_dlq_total
+                                intel_dlq_total.labels(reason="analysis_failed").inc()
+                            except Exception:
+                                pass
                             await redis.xack(STREAM_RAW_INTEL, group, msg_id)
                         except Exception:
                             logger.exception("Failed to move message %s to DLQ", msg_id)
 
         except Exception:
-            logger.exception("Analysis consumer error")
-            await asyncio.sleep(5)
+            logger.exception("Analysis consumer outer loop error (attempt=%d)", consec_outer_failures)
+            await exponential_backoff(consec_outer_failures, base=1.0, cap=60.0)
+            consec_outer_failures += 1
 
     # Drain the outbox publisher too before exiting.
     try:
@@ -312,5 +395,11 @@ async def run_analysis_consumer() -> None:
     except asyncio.TimeoutError:
         logger.warning("outbox publisher did not stop in 10s; cancelling")
         outbox_task.cancel()
+
+    # FN-3: stop the prompt hot-reload watcher created in PromptManager.
+    try:
+        prompt_mgr.stop_watcher()
+    except Exception:
+        logger.debug("prompt watcher stop failed", exc_info=True)
 
     logger.info("Analysis consumer exited cleanly")

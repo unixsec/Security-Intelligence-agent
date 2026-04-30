@@ -113,10 +113,20 @@ class BaseFetcher(ABC):
                 continue
             # reached a non-redirect response
             resp.raise_for_status()
-            # size cap (prefer Content-Length header; fall back to read())
+            # size cap (prefer Content-Length header; fall back to read()).
+            # SEC-6: malformed Content-Length must not crash the worker.
             cl = resp.headers.get("content-length")
-            if cl and int(cl) > _MAX_RESPONSE_BYTES:
-                raise ValueError(f"response too large: {cl} bytes (> {_MAX_RESPONSE_BYTES})")
+            if cl:
+                try:
+                    cl_int = int(cl)
+                except (ValueError, TypeError) as e:
+                    raise ValueError(
+                        f"Invalid Content-Length header from {current_url!r}: {cl!r}"
+                    ) from e
+                if cl_int > _MAX_RESPONSE_BYTES:
+                    raise ValueError(
+                        f"response too large: {cl_int} bytes (> {_MAX_RESPONSE_BYTES})"
+                    )
             if len(resp.content) > _MAX_RESPONSE_BYTES:
                 raise ValueError(
                     f"response too large: {len(resp.content)} bytes (> {_MAX_RESPONSE_BYTES})"

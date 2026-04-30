@@ -2,11 +2,21 @@
 
 Supports any OIDC-compliant IdP: Azure AD, Keycloak, Okta, Google Workspace, etc.
 Uses authlib for the protocol layer.
+
+SEC-3: PKCE (RFC 7636) is REQUIRED for the public-client / browser leg.
+We always send ``code_challenge_method=S256``; the verifier is held in a
+short-TTL in-process map keyed by ``state``. For multi-replica deployments
+that need state persistence across pods, swap the map for a Redis-backed
+store (one-line change in ``_verifier_store``).
 """
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
+import secrets
+import time
 from dataclasses import dataclass
 
 import httpx
@@ -16,6 +26,17 @@ from authlib.oidc.core import CodeIDToken
 from sia.config import get_auth_config
 
 logger = logging.getLogger(__name__)
+
+# PKCE verifier TTL — RFC 7636 expects code exchange to happen within minutes.
+_PKCE_VERIFIER_TTL_SEC = 600
+
+
+def _pkce_pair() -> tuple[str, str]:
+    """Return (verifier, S256 challenge). RFC 7636 §4.1/§4.2."""
+    verifier = secrets.token_urlsafe(64)[:128]   # 43..128 chars, base64url
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+    return verifier, challenge
 
 
 @dataclass
@@ -40,6 +61,27 @@ class OIDCProvider:
         self._providers: dict[str, dict] = cfg.get("providers", {}) or {}
         # Discovery document cache
         self._discovery: dict[str, dict] = {}
+        # PKCE verifier store: state -> (verifier, expires_at_epoch).
+        # Single-process; replace with Redis for multi-replica.
+        self._verifiers: dict[str, tuple[str, float]] = {}
+
+    def _put_verifier(self, state: str, verifier: str) -> None:
+        # Lazy GC of expired entries (cheap: dozens of items at most).
+        now = time.time()
+        if len(self._verifiers) > 1024:
+            self._verifiers = {
+                k: v for k, v in self._verifiers.items() if v[1] > now
+            }
+        self._verifiers[state] = (verifier, now + _PKCE_VERIFIER_TTL_SEC)
+
+    def _pop_verifier(self, state: str) -> str | None:
+        entry = self._verifiers.pop(state, None)
+        if not entry:
+            return None
+        verifier, exp = entry
+        if exp < time.time():
+            return None
+        return verifier
 
     def list_providers(self) -> list[dict]:
         """Return available providers for frontend login page."""
@@ -69,9 +111,17 @@ class OIDCProvider:
     async def get_authorization_url(
         self, provider_key: str, redirect_uri: str, state: str
     ) -> str:
-        """Build the authorization URL to redirect the user to the IdP."""
+        """Build the authorization URL to redirect the user to the IdP.
+
+        SEC-3: emits ``code_challenge`` + ``code_challenge_method=S256``.
+        The matching verifier is stored under ``state`` and consumed in
+        ``handle_callback``.
+        """
         pcfg = self.get_provider_config(provider_key)
         discovery = await self._discover(pcfg["issuer"])
+
+        verifier, challenge = _pkce_pair()
+        self._put_verifier(state, verifier)
 
         client = AsyncOAuth2Client(
             client_id=pcfg["client_id"],
@@ -82,13 +132,20 @@ class OIDCProvider:
         url, _ = client.create_authorization_url(
             discovery["authorization_endpoint"],
             state=state,
+            code_challenge=challenge,
+            code_challenge_method="S256",
         )
         return url
 
     async def handle_callback(
-        self, provider_key: str, redirect_uri: str, code: str
+        self, provider_key: str, redirect_uri: str, code: str, state: str | None = None
     ) -> OIDCUserInfo:
-        """Exchange authorization code for tokens and extract user info."""
+        """Exchange authorization code for tokens and extract user info.
+
+        ``state`` is required when PKCE was used during the redirect (it always
+        is, post-SEC-3). For backwards compatibility we tolerate ``None`` but
+        log a warning — production deployments should always pass it.
+        """
         pcfg = self.get_provider_config(provider_key)
         discovery = await self._discover(pcfg["issuer"])
 
@@ -98,10 +155,24 @@ class OIDCProvider:
             redirect_uri=redirect_uri,
         )
 
+        verifier: str | None = None
+        if state:
+            verifier = self._pop_verifier(state)
+            if verifier is None:
+                # Either CSRF, replay, or expired — refuse rather than
+                # exchange the code without PKCE.
+                raise ValueError("OIDC state expired or unknown; restart login")
+        else:
+            logger.warning("OIDC handle_callback called without state; PKCE skipped")
+
+        token_kwargs: dict = {"code": code}
+        if verifier is not None:
+            token_kwargs["code_verifier"] = verifier
+
         # Exchange code for tokens
         token = await client.fetch_token(
             discovery["token_endpoint"],
-            code=code,
+            **token_kwargs,
         )
 
         # Fetch userinfo
@@ -110,7 +181,11 @@ class OIDCProvider:
                 discovery["userinfo_endpoint"],
                 headers={"Authorization": f"Bearer {token['access_token']}"},
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise ValueError(
+                    f"OIDC userinfo endpoint returned {resp.status_code}: "
+                    f"{resp.text[:200]!r}"
+                )
             claims = resp.json()
 
         # Map role if configured

@@ -206,6 +206,13 @@ async def save_and_distribute(
                     .values(pdf_path=object_key)
                 )
 
+    # OBS-1: count successful report generation for SLO tracking.
+    try:
+        from sia.common.metrics import reports_generated_total
+        reports_generated_total.labels(report_type=report_type).inc()
+    except Exception:
+        logger.debug("metrics increment failed", exc_info=True)
+
     # Publish push task
     await publish_to_stream(STREAM_PUSH_TASK, {
         "report_id": str(report_id),

@@ -171,6 +171,16 @@ class LLMGateway:
         if is_cloud and self._anonymizer.has_patterns:
             messages, anon_ctx = self._anonymizer.anonymize_messages(messages)
 
+        provider_label = provider.config.provider.value if hasattr(provider, "config") else "unknown"
+        prompt_label = str(kwargs.get("_prompt_name", "unknown"))
+
+        # OBS-1: lazily import metrics so a missing prom-client install does
+        # not break the LLM gateway in extremely stripped-down test setups.
+        try:
+            from sia.common import metrics as _m
+        except Exception:  # pragma: no cover
+            _m = None  # type: ignore[assignment]
+
         try:
             response = await provider.chat_completion(messages, **kwargs)
             # De-anonymize response content for cloud providers
@@ -186,12 +196,32 @@ class LLMGateway:
                     finish_reason=response.finish_reason,
                 )
 
+            if _m is not None:
+                _m.llm_call_total.labels(
+                    provider=provider_label, model=model_name, result="success"
+                ).inc()
+                _m.llm_call_duration_seconds.labels(
+                    provider=provider_label, model=model_name, prompt=prompt_label,
+                ).observe(time.monotonic() - start)
+                if response.input_tokens:
+                    _m.llm_tokens_total.labels(
+                        provider=provider_label, model=model_name, kind="input",
+                    ).inc(response.input_tokens)
+                if response.output_tokens:
+                    _m.llm_tokens_total.labels(
+                        provider=provider_label, model=model_name, kind="output",
+                    ).inc(response.output_tokens)
+
             logger.info(
                 "LLM call success: model=%s, tokens=%d, latency=%dms",
                 model_name, response.total_tokens, response.latency_ms,
             )
             return response
         except Exception:
+            if _m is not None:
+                _m.llm_call_total.labels(
+                    provider=provider_label, model=model_name, result="error"
+                ).inc()
             logger.exception("LLM call failed: model=%s", model_name)
             raise
 

@@ -1,4 +1,12 @@
 {{- if .Values.ingress.enabled }}
+{{- /*
+DEP-1: production deployments must terminate TLS at the ingress.
+Override only when running an offline/internal cluster where TLS is
+provided by an upstream LB (and re-enable on the LB instead).
+*/ -}}
+{{- if and (eq .Values.config.env "production") (not .Values.ingress.tls.enabled) }}
+{{- fail "ingress.tls.enabled is false with config.env=production. Configure ingress.tls.secretName (cert-manager works well) before deploying." }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

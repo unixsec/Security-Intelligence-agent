@@ -11,8 +11,10 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from sia.common.database import Base
 
-# Import all models so metadata is populated
-from sia.models import intelligence, report, source, system, user  # noqa: F401
+# Import the package so every model module registers with Base.metadata.
+# (Importing the individual modules directly is fragile — one new module
+# silently misses out unless someone updates this list.)
+import sia.models  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

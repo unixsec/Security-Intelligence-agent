@@ -11,8 +11,14 @@ from dataclasses import dataclass
 import ldap3
 from ldap3 import ALL, SUBTREE, Connection, Server
 from ldap3.core.exceptions import LDAPBindError, LDAPException
+from ldap3.utils.conv import escape_filter_chars
 
 from sia.config import get_auth_config
+
+# Defensive cap: an LDAP server may have its own limit, but reject obviously
+# pathological inputs at the gate so we never even hand them to the directory.
+_MAX_USERNAME_LEN = 256
+_MAX_PASSWORD_LEN = 4096
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +46,21 @@ class LDAPProvider:
         """Bind as service account, search user, re-bind to verify password.
 
         Raises ValueError on auth failure.
+
+        SEC-1 (RFC 4515): the username is escaped via ``escape_filter_chars``
+        before being substituted into the search filter so attackers can not
+        inject ``*``, ``(``, ``)``, ``\\``, ``\\0`` to bypass authentication
+        or enumerate the directory.
         """
         cfg = self._cfg
         if not self.enabled:
             raise ValueError("LDAP authentication is not enabled")
+
+        # Reject pathological inputs before they ever reach the directory.
+        if not username or len(username) > _MAX_USERNAME_LEN:
+            raise ValueError("Invalid username length")
+        if not password or len(password) > _MAX_PASSWORD_LEN:
+            raise ValueError("Invalid credentials")
 
         server = Server(
             cfg["server"],
@@ -71,10 +88,13 @@ class LDAPProvider:
             logger.error("LDAP service account bind failed")
             raise ValueError("LDAP service unavailable")
 
-        # Step 2: Search for the user
+        # Step 2: Search for the user.
+        # IMPORTANT: escape per RFC 4515 before substitution. Without this,
+        # a username like ``*)(uid=*`` lets the user log in as any account.
+        safe_username = escape_filter_chars(username)
         search_filter = cfg.get(
             "user_search_filter", "(sAMAccountName={username})"
-        ).format(username=username)
+        ).format(username=safe_username)
 
         username_attr = cfg.get("username_attribute", "sAMAccountName")
         email_attr = cfg.get("email_attribute", "mail")

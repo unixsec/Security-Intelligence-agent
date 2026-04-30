@@ -1,3 +1,16 @@
+{{- /*
+DEP-1: refuse the open-internet egress default in production.
+``0.0.0.0/0`` is fine for dev / sandbox but is unacceptable for a
+production deployment where SSRF / data exfil should be bounded by an
+explicit allow-list of upstream APIs.
+*/ -}}
+{{- if eq .Values.config.env "production" }}
+{{- range .Values.network.egressAllowedCidrs }}
+{{- if eq . "0.0.0.0/0" }}
+{{- fail "network.egressAllowedCidrs contains 0.0.0.0/0 with config.env=production. Tighten to an explicit allow-list (LLM providers, threat feeds, registries) before deploying." }}
+{{- end }}
+{{- end }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

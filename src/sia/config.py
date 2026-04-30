@@ -125,10 +125,22 @@ class RedisSettings(BaseSettings):
 
 
 class MilvusSettings(BaseSettings):
+    # v0.4-1: Milvus is now optional but, when ``enabled``, drives 2nd / 3rd
+    # level dedup (vector similarity within the day, and cross-day).
+    enabled: bool = False
     host: str = "localhost"
     port: int = 19530
     token: str = ""
     collection_name: str = "intel_vectors"
+
+    # Embedding model — local, no out-of-cluster dependency.
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_dim: int = 384
+
+    # Dedup thresholds (cosine similarity 0..1; higher = more similar).
+    same_day_threshold: float = 0.85
+    cross_day_threshold: float = 0.80
+    cross_day_window_days: int = 14
 
     @model_validator(mode="after")
     def _resolve_token(self) -> MilvusSettings:

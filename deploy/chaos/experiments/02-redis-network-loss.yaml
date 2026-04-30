@@ -1,0 +1,19 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: sia-redis-loss
+  namespace: chaos-testing
+spec:
+  action: loss
+  mode: all
+  selector:
+    namespaces: [sia]
+    labelSelectors:
+      app.kubernetes.io/name: sia
+  loss:
+    loss: "100"           # 100% loss → effective partition
+    correlation: "0"
+  direction: to
+  externalTargets:
+    - sia-redis           # internal Service DNS
+  duration: 2m

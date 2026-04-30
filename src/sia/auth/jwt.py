@@ -3,6 +3,10 @@
 Supports both HS256 (symmetric; simple, dev default) and RS256 (asymmetric;
 recommended for production so the verification key can be distributed without
 granting sign capability). SEC-014.
+
+SEC-4: every token carries a ``jti`` claim; ``revoke_token()`` writes it to
+Redis with a TTL equal to the token's remaining lifetime. ``is_token_revoked()``
+queries that key during request authentication.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ import base64
 import binascii
 import hashlib
 import logging
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -18,6 +23,8 @@ import jwt
 from sia.config import get_auth_config, get_settings
 
 logger = logging.getLogger(__name__)
+
+_JWT_REVOKE_PREFIX = "jwt:revoked:"
 
 
 def _cfg() -> dict:
@@ -73,6 +80,10 @@ def _verification_key() -> str:
     return _signing_key()
 
 
+def _new_jti() -> str:
+    return secrets.token_urlsafe(16)
+
+
 def create_access_token(
     user_id: int,
     username: str,
@@ -90,6 +101,7 @@ def create_access_token(
         "type": "access",
         "exp": expire,
         "iat": datetime.now(timezone.utc),
+        "jti": _new_jti(),
     }
     if extra:
         payload.update(extra)
@@ -107,16 +119,58 @@ def create_refresh_token(user_id: int) -> tuple[str, datetime]:
         "type": "refresh",
         "exp": expires_at,
         "iat": datetime.now(timezone.utc),
+        "jti": _new_jti(),
     }
     token = jwt.encode(payload, _signing_key(), algorithm=_algorithm())
     return token, expires_at
 
 
 def decode_token(token: str) -> dict:
-    """Decode and validate a JWT. Raises jwt.PyJWTError on failure."""
+    """Decode and validate a JWT. Raises jwt.PyJWTError on failure.
+
+    Note: revocation is a separate concern; call ``is_token_revoked(payload)``
+    after decoding when authenticating a request.
+    """
     return jwt.decode(token, _verification_key(), algorithms=[_algorithm()])
 
 
 def token_hash(token: str) -> str:
     """SHA-256 hash of a token for DB storage (never store raw tokens)."""
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+async def is_token_revoked(payload: dict) -> bool:
+    """SEC-4: check whether a decoded JWT has been revoked via Redis.
+
+    A missing ``jti`` is treated as not-revoked (legacy tokens issued before
+    SEC-4 landed). All freshly-issued tokens after this change carry one.
+    """
+    jti = payload.get("jti")
+    if not jti:
+        return False
+    try:
+        from sia.common.redis import get_redis
+        r = get_redis()
+        return bool(await r.exists(_JWT_REVOKE_PREFIX + jti))
+    except Exception:
+        # Fail-open on Redis outage — alternative is to lock everyone out.
+        # The auth path stays available; revocation just degrades.
+        logger.exception("Revocation check failed; allowing token")
+        return False
+
+
+async def revoke_token(token: str) -> None:
+    """Insert the token's ``jti`` into the revocation set with TTL == remaining life."""
+    try:
+        payload = decode_token(token)
+    except jwt.PyJWTError:
+        return
+    jti = payload.get("jti")
+    if not jti:
+        return
+    exp = payload.get("exp")
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    ttl = max(int(exp) - now_ts, 1) if exp else 60
+    from sia.common.redis import get_redis
+    r = get_redis()
+    await r.set(_JWT_REVOKE_PREFIX + jti, "1", ex=ttl)

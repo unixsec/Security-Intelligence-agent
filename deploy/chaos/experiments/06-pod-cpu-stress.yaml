@@ -1,0 +1,16 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: StressChaos
+metadata:
+  name: sia-consumer-cpu-stress
+  namespace: chaos-testing
+spec:
+  mode: one
+  selector:
+    namespaces: [sia]
+    labelSelectors:
+      app.kubernetes.io/component: consumer
+  stressors:
+    cpu:
+      workers: 2
+      load: 95
+  duration: 5m

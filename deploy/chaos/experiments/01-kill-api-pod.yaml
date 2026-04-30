@@ -1,0 +1,16 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: sia-api-pod-kill
+  namespace: chaos-testing
+spec:
+  action: pod-kill
+  mode: one
+  selector:
+    namespaces: [sia]
+    labelSelectors:
+      app.kubernetes.io/name: sia
+      app.kubernetes.io/component: api
+  duration: 30s
+  scheduler:
+    cron: "@every 1h"

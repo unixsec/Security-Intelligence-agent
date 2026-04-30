@@ -24,6 +24,8 @@ from sia.models.system import (
     HolidayCalendar,
 )
 from sia.models.user import RefreshToken, User
+from sia.models.api_key import APIKey
+from sia.models.group import Group, UserGroup
 
 __all__ = [
     "Intelligence",
@@ -49,4 +51,7 @@ __all__ = [
     "HolidayCalendar",
     "User",
     "RefreshToken",
+    "APIKey",
+    "Group",
+    "UserGroup",
 ]

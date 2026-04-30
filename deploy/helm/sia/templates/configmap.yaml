@@ -18,6 +18,9 @@ data:
   SIA_CONFIG_DIR: {{ .Values.config.configDir | quote }}
   SIA_AUTH_JWT_ALGORITHM: {{ .Values.config.jwtAlgorithm | default "HS256" | quote }}
   SIA_OTLP_ENDPOINT: {{ .Values.observability.otlpEndpoint | default "" | quote }}
+  # v0.4-8 region awareness
+  SIA_REGION: {{ .Values.global.region | default "default" | quote }}
+  SIA_REGION_IDENTITY_PRIMARY: {{ .Values.global.identityPrimaryRegion | default "default" | quote }}
   # -- MySQL --------------------------------------------------------------
   SIA_MYSQL_HOST: {{ .Values.mysql.host | quote }}
   SIA_MYSQL_PORT: {{ .Values.mysql.port | quote }}

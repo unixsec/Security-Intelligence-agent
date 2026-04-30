@@ -1,0 +1,110 @@
+{{- /*
+v0.4-5 — Argo Rollouts canary alternative to api-deployment.yaml.
+
+When ``rollouts.enabled = true``, Helm renders this Rollout resource AND
+suppresses the Deployment (the Deployment template guards on the same
+flag — see api-deployment.yaml). The Rollout takes the same pod spec but
+adds a canary strategy: 10% → wait → 25% → analysis → 50% → analysis →
+100%.
+
+Operator prerequisites (one-time, cluster-wide):
+  - Argo Rollouts controller installed (``argo-rollouts`` namespace).
+  - kubectl plugin: ``kubectl argo rollouts ...``
+  - For automated promotion: a Prometheus AnalysisTemplate (created here)
+    pointing at the same ServiceMonitor SIA already exposes.
+
+Manual promotion:
+  kubectl argo rollouts promote sia-api -n {{ .Values.namespace }}
+*/ -}}
+{{- if .Values.rollouts.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: sia-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sia.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sia
+      app.kubernetes.io/component: api
+  strategy:
+    canary:
+      maxSurge: 1
+      maxUnavailable: 0
+      steps:
+        - setWeight: 10
+        - pause: { duration: {{ .Values.rollouts.pauseSeconds | default 60 }} }
+        - setWeight: 25
+        {{- if .Values.rollouts.analysis.enabled }}
+        - analysis:
+            templates:
+              - templateName: sia-api-error-rate
+        {{- else }}
+        - pause: { duration: {{ .Values.rollouts.pauseSeconds | default 60 }} }
+        {{- end }}
+        - setWeight: 50
+        {{- if .Values.rollouts.analysis.enabled }}
+        - analysis:
+            templates:
+              - templateName: sia-api-error-rate
+        {{- else }}
+        - pause: { duration: {{ .Values.rollouts.pauseSeconds | default 60 }} }
+        {{- end }}
+        - setWeight: 75
+        - pause: { duration: {{ .Values.rollouts.pauseSeconds | default 60 }} }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: sia
+        app.kubernetes.io/component: api
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8080"
+    spec:
+      {{- include "sia.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- include "sia.podSecurityContext" . | nindent 8 }}
+      {{- include "sia.topologySpread" (dict "component" "api") | nindent 6 }}
+      terminationGracePeriodSeconds: 30
+      volumes:
+        {{- include "sia.writableVolumes" . | nindent 8 }}
+        {{- include "sia.secretsVolume" . | nindent 8 }}
+        {{- include "sia.tlsVolumes" . | nindent 8 }}
+      containers:
+        - name: sia-api
+          image: {{ include "sia.image" (dict "global" .Values.global "image" .Values.api.image "chartVersion" .Chart.AppVersion) }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+{{- end }}
+
+{{- if and .Values.rollouts.enabled .Values.rollouts.analysis.enabled }}
+---
+# AnalysisTemplate — gates each canary step on the Prometheus error rate
+# computed by ``sia_llm_call_total{result="error"}`` over a 2-minute window.
+# Tweak ``maxRate`` for your noise floor.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: sia-api-error-rate
+  namespace: {{ .Values.namespace }}
+spec:
+  args:
+    - name: prometheus-server
+      value: {{ .Values.rollouts.analysis.prometheusUrl | quote }}
+  metrics:
+    - name: api-5xx-rate
+      interval: 30s
+      successCondition: result[0] <= {{ .Values.rollouts.analysis.maxErrorRate | default 0.02 }}
+      failureLimit: 2
+      provider:
+        prometheus:
+          address: "{{`{{args.prometheus-server}}`}}"
+          query: |
+            sum(rate(http_requests_total{job="sia-api",code=~"5.."}[2m]))
+            / sum(rate(http_requests_total{job="sia-api"}[2m]))
+{{- end }}

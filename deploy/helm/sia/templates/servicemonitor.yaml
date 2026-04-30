@@ -1,0 +1,30 @@
+{{- /*
+OBS-1: optional Prometheus Operator ServiceMonitor.
+
+Enabled when ``observability.serviceMonitor.enabled`` is true AND the
+ServiceMonitor CRD is present (the operator API group must already be
+registered, otherwise ``helm install`` will fail). Use ``--skip-crds``
+in helm if you're rendering against a cluster without the operator.
+*/ -}}
+{{- if .Values.observability.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: sia-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "sia.labels" . | nindent 4 }}
+    {{- with .Values.observability.serviceMonitor.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: sia
+      app.kubernetes.io/component: api
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.observability.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.observability.serviceMonitor.scrapeTimeout | default "10s" }}
+{{- end }}

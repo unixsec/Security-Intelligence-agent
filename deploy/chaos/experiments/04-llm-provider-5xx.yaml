@@ -1,0 +1,21 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: sia-llm-anthropic-block
+  namespace: chaos-testing
+spec:
+  action: partition
+  mode: all
+  selector:
+    namespaces: [sia]
+    labelSelectors:
+      app.kubernetes.io/component: consumer
+  direction: to
+  target:
+    selector:
+      namespaces: [kube-system]   # placeholder — chaos-mesh requires a target;
+      labelSelectors:              # use ``externalTargets`` for real DNS host
+        k8s-app: kube-dns
+  externalTargets:
+    - api.anthropic.com
+  duration: 5m

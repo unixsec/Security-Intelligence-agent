@@ -23,6 +23,12 @@ _ALLOWED_SCHEMES = frozenset({"http", "https"})
 _MAX_URL_LEN = 2048
 _MAX_HOST_LEN = 253
 
+# SEC-5: cap DNS resolution time. ``getaddrinfo`` can hang indefinitely on a
+# malicious or slow resolver; a single hung call would block the consumer
+# thread until the request layer gives up. 5 seconds is more than enough for
+# a healthy resolver and short enough to fail fast under attack.
+_DNS_TIMEOUT_SEC = 5.0
+
 # 默认拒绝的网段（IPv4 + IPv6）。链路本地 169.254.0.0/16 覆盖了
 # AWS / GCP / Azure 的 instance metadata (169.254.169.254)。
 _DENY_NETS: tuple[ipaddress._BaseNetwork, ...] = tuple(
@@ -81,18 +87,25 @@ def validate_source_url(url: str, *, allowed_hosts: set[str] | None = None) -> N
     if allowed_hosts is not None and host not in allowed_hosts:
         raise UnsafeURLError(f"host {host!r} not in allowlist")
 
-    # 若 host 本身是 IP 字面量，直接校验；否则 DNS 解析。
+    # 若 host 本身是 IP 字面量，直接校验；否则 DNS 解析（带超时）。
     addrs: set[str] = set()
     try:
         ipaddress.ip_address(host)
         addrs.add(host)
     except ValueError:
+        # SEC-5: enforce a hard timeout on the resolver via socket-level
+        # default. ``setdefaulttimeout`` is process-global; we restore the
+        # previous value after the call.
+        prev_to = socket.getdefaulttimeout()
+        socket.setdefaulttimeout(_DNS_TIMEOUT_SEC)
         try:
             # getaddrinfo 返回 [(family, type, proto, canon, sockaddr), ...]
             # sockaddr[0] 是 IP 字符串
             results = socket.getaddrinfo(host, None)
-        except OSError as e:
+        except (OSError, socket.timeout) as e:
             raise UnsafeURLError(f"DNS resolution failed for {host!r}: {e}") from e
+        finally:
+            socket.setdefaulttimeout(prev_to)
         addrs = {r[4][0] for r in results}
 
     if not addrs:

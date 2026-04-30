@@ -1,0 +1,20 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: sia-mysql-stall
+  namespace: chaos-testing
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces: [sia]
+    labelSelectors:
+      app.kubernetes.io/name: sia
+  delay:
+    latency: "5s"
+    jitter: "500ms"
+    correlation: "100"
+  direction: to
+  externalTargets:
+    - sia-mysql
+  duration: 5m
