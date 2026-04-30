@@ -80,14 +80,69 @@ jobs:
           SIA_REDIS_HOST: 127.0.0.1
           SIA_AUTH_JWT_SECRET: "ci-test-jwt-secret-at-least-32-characters-long"
           SIA_API_KEY: "ci-test-api-key"
-        run: PYTHONPATH=src pytest tests/unit/ -v --cov=sia --cov-report=xml
+        # TEST-2: enforce a coverage floor so regressions stand out.
+        run: PYTHONPATH=src pytest tests/unit/ -v --cov=sia --cov-report=xml --cov-fail-under=55
       - name: pip-audit (known-vulnerable deps)
-        run: pip-audit --strict || true   # do not block build; report only
+        # TEST-2: known vulnerable deps now block the build. Use ``ignore-vuln``
+        # in pyproject (or the ``--ignore-vuln`` flag) for vetted exceptions.
+        run: pip-audit --strict
       - name: Upload coverage
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: coverage.xml
+
+  e2e:
+    # TEST-1: full pipeline — collector→analyzer→reporter against real MySQL+Redis.
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ${{ secrets.CI_MYSQL_ROOT_PASSWORD || 'ci-temp-root' }}
+          MYSQL_DATABASE: sia
+          MYSQL_USER: sia
+          MYSQL_PASSWORD: ${{ secrets.CI_MYSQL_PASSWORD || 'ci-temp-pass' }}
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -e ".[test]"
+      - name: Run e2e tests
+        env:
+          SIA_ENV: test
+          SIA_MYSQL_HOST: 127.0.0.1
+          SIA_MYSQL_USER: sia
+          SIA_MYSQL_PASSWORD: ${{ secrets.CI_MYSQL_PASSWORD || 'ci-temp-pass' }}
+          SIA_MYSQL_DATABASE: sia
+          SIA_REDIS_HOST: 127.0.0.1
+          SIA_AUTH_JWT_SECRET: "ci-test-jwt-secret-at-least-32-characters-long"
+          SIA_API_KEY: "ci-test-api-key"
+        # The e2e fixture set tries to spawn testcontainers; on the GH runner
+        # we already have MySQL+Redis as services, so we provide them via env
+        # and `pytest -m e2e` skips the testcontainers fixtures by env probe.
+        run: |
+          PYTHONPATH=src pytest tests/e2e/ -v -m e2e \
+            --override-ini="addopts=" \
+            -o asyncio_mode=auto \
+            || (echo "::warning::e2e job failed — see logs" && exit 1)
 
   build-backend:
     runs-on: ubuntu-latest
@@ -112,10 +167,33 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: true
+      - name: Generate SBOM (Syft, CycloneDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: sia-backend:${{ github.sha }}
+          format: cyclonedx-json
+          artifact-name: sbom-backend.cdx.json
+
+  web-test:
+    # FE-2: lint + Vitest before bundling.
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: cd web && npm install --no-audit --no-fund
+      - name: Run ESLint
+        run: cd web && npm run lint
+      - name: Run Vitest
+        run: cd web && npm run test
 
   build-web:
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [lint, web-test]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

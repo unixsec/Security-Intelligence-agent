@@ -1,5 +1,7 @@
 # Security Intelligence Agent (SIA)
 
+> ⚠️ **Early Access (v0.x)** — Production deployment requires the hardening checklist in [`docs/SECURITY.md`](./docs/SECURITY.md) §11. Defaults are tuned for try-out, not for hostile environments.
+
 **v0.2.0** — AI-powered security intelligence aggregation & analysis platform, designed to run on enterprise Kubernetes.
 
 SIA continuously ingests security intelligence from public and internal sources, uses LLMs to enrich and triage each item, and delivers prioritized daily / weekly / emergency reports through a Web console, REST API, and email.
@@ -36,14 +38,13 @@ Full walkthrough: [`docs/DEPLOYMENT_GUIDE.md`](./docs/DEPLOYMENT_GUIDE.md).
 | [`docs/SECURITY.md`](./docs/SECURITY.md) | Threat model, hardening baseline, compliance |
 | [`docs/USER_MANUAL.md`](./docs/USER_MANUAL.md) | Web console user guide |
 | [`docs/API_REFERENCE.md`](./docs/API_REFERENCE.md) | REST API reference & integration examples |
-| [`design/Security_Intelligence_Agent_Design_v5.0.md`](./design/Security_Intelligence_Agent_Design_v5.0.md) | **Authoritative design** (v5.0): C4 diagrams, sequences, state machines, ER, threat DFD, ADR, NFR, FMEA |
 
 ## Source layout
 
 ```
 .
 ├── src/sia/                Python backend (FastAPI + consumer)
-├── web/                    React frontend (Vite)
+├── web/                    Vue 3 frontend (Vite + Element Plus + Pinia + ECharts)
 ├── config/                 auth.yaml, llm_gateway.yaml (non-secret)
 ├── prompts/                LLM prompt templates
 ├── workflows/              YAML workflow definitions

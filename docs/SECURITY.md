@@ -188,6 +188,127 @@ SIA 的设计对应常见合规条款：
 
 **请勿**在公开 Issue 披露未修复的漏洞。
 
+## 11. 生产部署加固清单（Production Hardening Checklist）
+
+> v0.2.0 是 **Early Access**。在面向生产部署前**必须**完成以下检查项。Task ID 与详细决策（含 ADR / NFR / FMEA）由维护者在本地 `design/` 目录管理，该目录不上传 GitHub。
+
+### 11.1 强制项（阻断生产）
+
+| # | 检查项 | 验证命令 | 关联 Task |
+|---|---|---|---|
+| 1 | LDAP 过滤器已转义元字符 | `grep "escape_filter_chars" src/sia/auth/providers/ldap.py` | SEC-1 |
+| 2 | API Key 已支持 scope/role | `kubectl get secret sia-api-keys -o yaml \| grep role` | SEC-2 |
+| 3 | OIDC 启用 PKCE | `grep "code_challenge" src/sia/auth/providers/oidc.py` | SEC-3 |
+| 4 | JWT 撤销机制可用 | `curl -X POST /api/v1/auth/logout` 后旧 token 应 401 | SEC-4 |
+| 5 | DNS 解析有超时 | `grep "_DNS_TIMEOUT" src/sia/collector/url_validator.py` | SEC-5 |
+| 6 | Helm `ingress.tls.enabled=true` | `helm get values sia \| grep "tls:" -A1` | DEP-1 |
+| 7 | egressAllowedCidrs 收窄到允许列表 | values.yaml 不含 `0.0.0.0/0` | DEP-1 |
+| 8 | Gatekeeper 约束已自动应用 | `kubectl get constraints` 应有 5+ 项 | DEP-2 |
+| 9 | alembic versions 目录非空 | `ls migrations/versions/*.py` | DEP-4 |
+| 10 | 所有强密钥从外部 Secret 读取 | `kubectl get secret sia-secrets` | （已实现） |
+| 11 | Trivy 镜像扫描在 CI 阻塞 | `.github/workflows/ci.yml` 含 `exit-code: '1'` | （已实现） |
+| 12 | pip-audit 在 CI 阻塞 | CI yaml 中无 `\|\| true` | TEST-2 |
+
+### 11.2 强烈建议项
+
+| # | 检查项 | 关联 Task |
+|---|---|---|
+| 13 | /metrics 端点开放并被 Prometheus 抓取 | OBS-1 |
+| 14 | 限速器使用 Redis（多副本一致） | FN-4 |
+| 15 | 至少 1 条 E2E 测试在 CI 跑通 | TEST-1 |
+| 16 | Pod Security Standards labels 应用到 namespace | DEP-3 |
+| 17 | Falco runtime 检测启用 | （集群侧 operator 部署） |
+| 18 | 备份恢复演练（dr_drill.sh）每季度 1 次 | （运维 SOP） |
+| 19 | OpenTelemetry tracing 接入 | OBS-2 |
+| 20 | 渗透测试 + bug bounty | （外部） |
+
+### 11.3 部署前一键自检脚本
+
+```bash
+# 在仓库根目录运行
+bash scripts/ops/preflight_check.sh
+```
+
+预期：所有 P0 项 ✓ ；任何 ✗ 项必须修复后再部署生产。脚本本身在 v0.3 落地（见 IMPROVEMENT_PLAN）。
+
+## 12. 漏洞披露与 Bug Bounty 流程（v0.4）
+
+### 12.1 报告渠道
+
+| 渠道 | 用途 |
+|---|---|
+| `unix_sec@163.com` (主) | 所有漏洞披露，PGP 密钥见 `/.well-known/security.txt` |
+| GitHub Security Advisories | 仅当报告者明确希望走 GitHub 流程 |
+| 公开 Issue | **禁止**披露未修复的漏洞 |
+
+### 12.2 范围（Scope）
+
+**In scope**（接受报告并支付奖金，奖金由部署方设置；本仓库不直接发奖）：
+
+- `src/sia/**` — 所有应用代码
+- `deploy/helm/sia/**` — Helm chart 安全配置缺陷
+- `deploy/docker/**` — 容器逃逸 / 镜像加固
+- `scripts/deploy/configure.sh`, `scripts/deploy/deploy-k8s.sh` — 部署脚本注入或权限问题
+- `web/**` — 前端 XSS / CSRF / 注入
+
+**Out of scope**：
+
+- 第三方依赖的已知 CVE（请向上游报告；本项目通过 pip-audit / Trivy 跟踪）
+- 用户配置错误造成的暴露（如 0.0.0.0/0 ingress）
+- DOS / 暴力破解（已通过限速器缓解）
+- 未实现的功能（如 Webhook 通用插件之外的渠道）
+- 仅在 dev/test 模式生效的 backdoor（如 anonymous role，prod 强校验已禁）
+
+### 12.3 严重度评估（CVSS 3.1 + 业务上下文）
+
+| 严重度 | CVSS | SLA 修复 | 示例 |
+|---|---|---|---|
+| Critical | 9.0+ | 7 天 | RCE，认证完全绕过，密钥泄露 |
+| High | 7.0–8.9 | 30 天 | 权限提升，SQLi，已知 IOC 数据泄露 |
+| Medium | 4.0–6.9 | 90 天 | XSS，限速绕过，CSRF（非关键路径） |
+| Low | < 4.0 | best-effort | 信息泄露（Server header），日志冗余 |
+
+### 12.4 处理流程
+
+```
+报告者 → 我们 (72h ack) → 评估严重度 → 私下修复 PR (针对私有 CVE 分支)
+  → 协调披露日期 (默认 90 天，或受影响用户 75% 已升级)
+  → CVE 申请 + 公开 advisory + CHANGELOG 致谢
+```
+
+### 12.5 渗透测试节奏
+
+| 类型 | 频率 | 范围 |
+|---|---|---|
+| 内部红队 | 季度 1 次 | 完整 K8s 部署 + chaos drill |
+| 外部黑盒 | 年度 1 次 | API + 前端 + 部署链 |
+| SAST + SCA | 每次 PR | Trivy + pip-audit + ruff security rules |
+| DAST | 周 | 内部 staging（OWASP ZAP / Nuclei） |
+
+外部测试报告由维护者在本地 `design/` 目录归档（该目录整体不上传 GitHub）；摘要 + 已修复结论入本节末尾的"历史"表。
+
+### 12.6 .well-known/security.txt
+
+公开部署应在 ingress 暴露：
+
+```
+Contact: mailto:security@<your-domain>
+Expires: 2027-01-01T00:00:00Z
+Encryption: https://<your-domain>/.well-known/pgp-key.asc
+Acknowledgments: https://<your-domain>/security/credits
+Preferred-Languages: en, zh
+Canonical: https://<your-domain>/.well-known/security.txt
+Policy: https://<your-domain>/security/policy
+```
+
+参考 RFC 9116。模板见仓库根的 `.well-known/security.txt.example`。
+
+### 12.7 历史（每次修复后追加）
+
+| 报告日期 | CVE | 严重度 | 状态 | 致谢 |
+|---|---|---|---|---|
+| — | — | — | — | — |
+
 ---
 
-*SIA v0.2.0 | Security Model & Hardening Baseline*
+*SIA v0.4 | Security Model & Hardening Baseline (with §11 production checklist + §12 vulnerability disclosure)*

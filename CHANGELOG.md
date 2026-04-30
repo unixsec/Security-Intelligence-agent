@@ -4,6 +4,47 @@ All notable changes to SIA. The format follows [Keep a Changelog](https://keepac
 
 ## [Unreleased]
 
+### Added — v0.4 Long-term Roadmap (Milvus dedup / Multi-region / Canary / SLOs / SIEM / RBAC / i18n)
+
+- **Milvus three-level dedup** (`common/milvus_client.py` + `analyzer/dedup.py`):
+  Level 1 fingerprint (unchanged) + Level 2 same-day cosine ≥ 0.85 + Level 3
+  cross-day cosine ≥ 0.80 over 14-day window. Embedding via local
+  sentence-transformers `all-MiniLM-L6-v2` (384-dim, no cloud round-trip).
+  Best-effort: any failure degrades silently; Level 1 stays authoritative.
+  Wired into `persist_analysis_result`. ADR-0009.
+- **SIEM / SOAR egress** — two new push adapters:
+  - `webhook` (HTTPS POST, optional HMAC `X-SIA-Signature: sha256=...`,
+    SSRF-guarded URL, level filter)
+  - `syslog` (RFC 5424 over TCP+TLS / TCP / UDP, structured-data block).
+  ADR-0012.
+- **Resource-level RBAC** (`auth/permissions.py` + `models/group.py`):
+  `(resource, action)` permission tuples, role baselines, group
+  memberships with `extra_permissions` and `owns_tag`. New endpoints can
+  use `require_permission("reports", "generate")`. ADR-0011.
+- **Frontend i18n** (`web/src/i18n/`): vue-i18n with `zh-CN` + `en`
+  locales, persisted in localStorage, header switcher. `auth/`, `nav/`,
+  `dashboard/`, `intelligence/`, `reports/`, `errors/` namespaces seeded.
+- **Argo Rollouts canary** (`templates/api-rollout.yaml`): 10→25→50→75→100
+  steps with optional Prometheus `AnalysisTemplate` gating each pause on
+  the API 5xx error rate. Toggle with `rollouts.enabled=true`. The legacy
+  Deployment is suppressed when on. ADR-0013.
+- **SLOs + multi-window burn-rate alerts** (`templates/prometheusrule.yaml`):
+  availability 99.9% / 28d, read p95 < 200 ms, pipeline e2e < 5 min;
+  page on 14.4× / 6× burn, ticket on 1× burn. Starter Grafana dashboard
+  `deploy/grafana/sia-overview.dashboard.json`. ADR-0014.
+- **Chaos Mesh experiment suite** (`deploy/chaos/`): six pre-built
+  experiments mapping to FMEA failure modes (pod kill / Redis loss /
+  MySQL stall / LLM block / clock skew / CPU stress) + `chaos_observe.sh`.
+- **Multi-region scaffolding** (`auth/region.py` + helm
+  `global.{region,identityPrimaryRegion}` + ConfigMap injection):
+  identity-primary write-pinning helper, region tag for telemetry. Full
+  topology documented in maintainer-local design notes (ADR-0010).
+- **Vulnerability disclosure & bug bounty** (`docs/SECURITY.md` §12 +
+  `.well-known/security.txt.example`): scope, severity SLAs, pen-test
+  cadence, RFC 9116 template.
+- **Design refresh**: ADR-0009 ~ ADR-0014; `06-nfr.md` §6.7-6.9 (SLOs,
+  multi-region, release cadence with budget); `07-fmea.md` FM-21 ~ FM-28.
+
 ### Added — v0.3 Adapter Layer + Global Intel + 7 Push Channels + Layered Exec Brief (v6.0 design)
 - **Adapter layer** (`src/sia/adapters/`): `BaseAdapter` + `Registry` pattern;
   three surfaces (`collector`, `push`, `llm`) each with registration via
@@ -31,7 +72,7 @@ All notable changes to SIA. The format follows [Keep a Changelog](https://keepac
   `24-usecase-view` (UML, 30 UC × 6 actors).
 - **Design Principles Audit** (`docs/DESIGN_PRINCIPLES_AUDIT.md`): SOLID,
   12-Factor, Cloud Native, DDD, OWASP ASVS v4 L2, Zero Trust matrix.
-- **v6.0 design doc** (`design/Security_Intelligence_Agent_Design_v6.0.md`):
+- **v6.0 design doc** (maintainer-local; `design/` is not pushed to GitHub):
   supersedes v5.0 as authoritative design with new ADRs 013-016.
 
 ### Added — Unit tests (new modules ≥ 60% cov target)

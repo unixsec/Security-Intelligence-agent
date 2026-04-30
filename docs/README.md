@@ -25,13 +25,11 @@ Security Intelligence Agent（SIA）v0.2.0 的全部工程文档。面向三类�
 | [`USER_MANUAL.md`](./USER_MANUAL.md) | Web 控制台使用手册 |
 | [`API_REFERENCE.md`](./API_REFERENCE.md) | REST API 参考与集成示例 |
 
-### 设计文档（`../design/`）
+### 设计文档（本地）
 
-| 文档 | 内容 |
-|---|---|
-| [`../design/Security_Intelligence_Agent_Design_v5.0.md`](../design/Security_Intelligence_Agent_Design_v5.0.md) | **当前权威设计（v5.0）**：C4 架构图、序列图、状态机、ER、威胁 DFD、ADR、NFR、FMEA |
+详细设计文档（架构、ER、序列、状态机、威胁模型、NFR、FMEA、多 region 拓扑、ADR 等）由维护者在本地仓库根的 `design/` 目录维护，**该目录由 `.gitignore` 整体排除，不会随 git 上传到 GitHub**，仅供本地分析与内部评审使用。
 
-历史版本（v1.0 / v2.0 / v3.0 / v4.0 / Final）保留在 `design/` 目录下供溯源，不再作为实施依据。
+如果你是仓库维护者：直接在本地 `design/` 下浏览即可。如果你是外部贡献者：本仓库的公开技术信息以本目录（`docs/`）下的文档为准；对架构/安全模型有进一步问题请通过 `SECURITY.md` 中的渠道联系维护者。
 
 ## 快速开始（部署）
 

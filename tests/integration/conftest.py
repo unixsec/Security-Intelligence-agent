@@ -42,8 +42,19 @@ _REASON = "Docker daemon unavailable — skipping integration tests."
 requires_docker = pytest.mark.skipif(not _docker_available(), reason=_REASON)
 
 
+def _services_already_provided() -> bool:
+    """True when the runner has injected SIA_MYSQL_HOST + SIA_REDIS_HOST itself
+    (e.g. GitHub Actions ``services:``). In that case we skip testcontainers
+    and trust the provided values — much faster on CI.
+    """
+    return bool(os.environ.get("SIA_MYSQL_HOST")) and bool(os.environ.get("SIA_REDIS_HOST"))
+
+
 @pytest.fixture(scope="session")
 def mysql_container():
+    if _services_already_provided():
+        yield None  # already injected via env; nothing to start
+        return
     if not _docker_available():
         pytest.skip(_REASON)
     from testcontainers.mysql import MySqlContainer
@@ -56,6 +67,9 @@ def mysql_container():
 
 @pytest.fixture(scope="session")
 def redis_container():
+    if _services_already_provided():
+        yield None
+        return
     if not _docker_available():
         pytest.skip(_REASON)
     from testcontainers.redis import RedisContainer
@@ -65,26 +79,31 @@ def redis_container():
 
 @pytest.fixture(scope="session")
 def sia_env(mysql_container, redis_container):
-    """Populate SIA_* env vars to point the app at the containerized services.
+    """Populate SIA_* env vars to point the app at MySQL + Redis.
+
+    Either uses values injected by the runner (GitHub Actions services) or
+    binds to whatever testcontainers brought up.
 
     Must run before any `sia.config.get_settings()` call because @lru_cache
     captures the first result.
     """
+    if mysql_container is not None:
+        os.environ["SIA_MYSQL_HOST"] = mysql_container.get_container_host_ip()
+        os.environ["SIA_MYSQL_PORT"] = str(mysql_container.get_exposed_port(3306))
+        os.environ.setdefault("SIA_MYSQL_USER", "sia_test")
+        os.environ.setdefault("SIA_MYSQL_PASSWORD", "sia_test_pw_CI_only")
+        os.environ.setdefault("SIA_MYSQL_DATABASE", "sia_test")
+    if redis_container is not None:
+        os.environ["SIA_REDIS_HOST"] = redis_container.get_container_host_ip()
+        os.environ["SIA_REDIS_PORT"] = str(redis_container.get_exposed_port(6379))
     os.environ["SIA_ENV"] = "test"
-    os.environ["SIA_MYSQL_HOST"] = mysql_container.get_container_host_ip()
-    os.environ["SIA_MYSQL_PORT"] = str(mysql_container.get_exposed_port(3306))
-    os.environ["SIA_MYSQL_USER"] = "sia_test"
-    os.environ["SIA_MYSQL_PASSWORD"] = "sia_test_pw_CI_only"
-    os.environ["SIA_MYSQL_DATABASE"] = "sia_test"
-    os.environ["SIA_REDIS_HOST"] = redis_container.get_container_host_ip()
-    os.environ["SIA_REDIS_PORT"] = str(redis_container.get_exposed_port(6379))
-    os.environ["SIA_AUTH_JWT_SECRET"] = "ci-test-jwt-secret-at-least-32-characters-long"
-    os.environ["SIA_AUTH_JWT_ALGORITHM"] = "HS256"
-    os.environ["SIA_API_KEY"] = "ci-test-api-key"
-    os.environ["SIA_MINIO_HOST"] = "localhost"
-    os.environ["SIA_MINIO_PORT"] = "9000"
-    os.environ["SIA_MINIO_ACCESS_KEY"] = "ci-minio-key"
-    os.environ["SIA_MINIO_SECRET_KEY"] = "ci-minio-secret-at-least-16-chars"
+    os.environ.setdefault("SIA_AUTH_JWT_SECRET", "ci-test-jwt-secret-at-least-32-characters-long")
+    os.environ.setdefault("SIA_AUTH_JWT_ALGORITHM", "HS256")
+    os.environ.setdefault("SIA_API_KEY", "ci-test-api-key")
+    os.environ.setdefault("SIA_MINIO_HOST", "localhost")
+    os.environ.setdefault("SIA_MINIO_PORT", "9000")
+    os.environ.setdefault("SIA_MINIO_ACCESS_KEY", "ci-minio-key")
+    os.environ.setdefault("SIA_MINIO_SECRET_KEY", "ci-minio-secret-at-least-16-chars")
     # Force cache invalidation so tests get a fresh Settings
     from sia.config import get_settings
     get_settings.cache_clear()

@@ -190,17 +190,23 @@ POST   /api/v1/users/{id}/unlock
 - 时间：ISO 8601，UTC，`?since=2026-04-20T00:00:00Z`
 - 多值：逗号分隔，`?priority=P0,P1`
 
-## 6. Webhook / 推送（规划中）
+## 6. 推送渠道
 
-当前 SIA 通过**邮件**推送 P0 告警与每日报告。Webhook 推送在 roadmap 中：
+SIA v0.3 已支持以下 7 种推送适配器，配置位于 `config/push_channels.yaml`，实现位于 `src/sia/adapters/push/`：
 
-```
-POST <your_webhook_url>
-X-SIA-Signature: sha256=<HMAC>
-body: { "event": "intel.p0", "intel_id": 123, "url": "https://..." }
-```
+| 渠道 | 配置 key | 实现 |
+|---|---|---|
+| Email (SMTP/SMTPS) | `email` | `adapters/push/email.py` |
+| 企业微信群机器人 | `wechat_work` | `adapters/push/wechat_work.py` |
+| 微信公众号模板消息 | `wechat` | `adapters/push/wechat.py` |
+| 飞书自定义机器人 | `feishu` | `adapters/push/feishu.py` |
+| 钉钉自定义机器人 | `dingtalk` | `adapters/push/dingtalk.py` |
+| Telegram Bot | `telegram` | `adapters/push/telegram.py` |
+| 阿里云 / 腾讯云 SMS | `sms` | `adapters/push/sms.py`（阿里云已实现，腾讯云仅占位） |
 
-若需提前启用，联系维护团队。
+调度由 `reporter/pusher/dispatcher.py` 处理：从 `push_task_stream` 消费，按 P0/P1 路由到优先渠道，支持指数退避重试与死信队列。
+
+通用 Webhook（HTTP POST + HMAC 签名）目前不在 v0.3 范围，计划在 v0.4 加入。
 
 ## 7. 集成示例
 
