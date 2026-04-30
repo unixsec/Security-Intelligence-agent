@@ -30,7 +30,6 @@ Full walkthrough: [`docs/DEPLOYMENT_GUIDE.md`](./docs/DEPLOYMENT_GUIDE.md).
 | Doc | 简介 |
 |---|---|
 | [`docs/README.md`](./docs/README.md) | Documentation index |
-| [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) | System architecture & data flow |
 | [`docs/BUILD_GUIDE.md`](./docs/BUILD_GUIDE.md) | Build images from source |
 | [`docs/DEPLOYMENT_GUIDE.md`](./docs/DEPLOYMENT_GUIDE.md) | Enterprise K8s deployment (authoritative ops doc) |
 | [`docs/CONFIGURATION.md`](./docs/CONFIGURATION.md) | Placeholder / env-var / Helm values reference |

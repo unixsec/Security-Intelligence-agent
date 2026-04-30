@@ -5,7 +5,7 @@ Security Intelligence Agent（SIA）v0.2.0 的全部工程文档。面向三类�
 | 我是… | 先读 |
 |---|---|
 | **部署实施 / SRE** | [`DEPLOYMENT_GUIDE.md`](./DEPLOYMENT_GUIDE.md) → [`CONFIGURATION.md`](./CONFIGURATION.md) → [`OPERATIONS_GUIDE.md`](./OPERATIONS_GUIDE.md) |
-| **开发 / 打包** | [`ARCHITECTURE.md`](./ARCHITECTURE.md) → [`BUILD_GUIDE.md`](./BUILD_GUIDE.md) |
+| **开发 / 打包** | [`BUILD_GUIDE.md`](./BUILD_GUIDE.md)（架构详解见维护者本地 `design/`） |
 | **终端用户 / 分析师** | [`USER_MANUAL.md`](./USER_MANUAL.md) |
 | **安全审计** | [`SECURITY.md`](./SECURITY.md) |
 | **API 集成方** | [`API_REFERENCE.md`](./API_REFERENCE.md) |
@@ -16,7 +16,6 @@ Security Intelligence Agent（SIA）v0.2.0 的全部工程文档。面向三类�
 
 | 文档 | 内容 |
 |---|---|
-| [`ARCHITECTURE.md`](./ARCHITECTURE.md) | 系统架构、组件职责、数据流（简化概览） |
 | [`BUILD_GUIDE.md`](./BUILD_GUIDE.md) | 从源码构建后端 / 前端 Docker 镜像 |
 | [`DEPLOYMENT_GUIDE.md`](./DEPLOYMENT_GUIDE.md) | 企业 Kubernetes 一键部署（权威操作文档） |
 | [`CONFIGURATION.md`](./CONFIGURATION.md) | 所有占位符 / 环境变量 / Helm 值的完整参考 |

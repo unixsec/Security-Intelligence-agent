@@ -729,7 +729,7 @@ kubectl delete namespace sia
 
 ### SIA 项目内文档
 
-- 架构与部署：`docs/ARCHITECTURE.md`、`docs/DEPLOYMENT_GUIDE.md`
+- 部署：`docs/DEPLOYMENT_GUIDE.md`
 - 配置参考：`docs/CONFIGURATION.md`
 - 安全加固：`docs/SECURITY.md`（§11 检查项 + §12 漏洞披露）
 - 运维 Runbook：`docs/OPERATIONS_GUIDE.md`
