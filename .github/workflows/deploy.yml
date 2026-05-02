@@ -153,7 +153,7 @@ jobs:
     environment: ${{ inputs.environment || 'staging' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
 
       - name: Configure kubectl
         uses: azure/k8s-set-context@v4
