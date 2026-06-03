@@ -14,7 +14,7 @@ RUN npm run build
 RUN mkdir -p /out && cp -r /build/../deploy/static/* /out/ 2>/dev/null || cp -r /build/dist/* /out/ 2>/dev/null || true
 
 # ---------- Stage 2: Nginx (unprivileged — runs as UID 101, binds :8080) ----------
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 
 LABEL maintainer="alex <unix_sec@163.com>" \
       org.opencontainers.image.title="sia-web" \
