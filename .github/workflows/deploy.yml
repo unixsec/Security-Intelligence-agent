@@ -32,7 +32,7 @@ jobs:
       backend_digest: ${{ steps.push_backend.outputs.digest }}
       web_digest: ${{ steps.push_web.outputs.digest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Determine tag
         id: meta
@@ -152,7 +152,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment || 'staging' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: azure/setup-helm@v4
 
       - name: Configure kubectl
